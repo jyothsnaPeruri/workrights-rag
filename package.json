@@ -1,0 +1,38 @@
+{
+  "name": "workrights-rag",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fetch-sources": "node scripts/fetch-sources.mjs",
+    "verify": "node --env-file=.env scripts/verify-azure.mjs",
+    "ingest": "node --env-file=.env scripts/ingest.mjs",
+    "search": "node --env-file=.env scripts/retrieve.mjs",
+    "evaluate": "node --env-file=.env scripts/evaluate.mjs",
+    "ask": "node --env-file=.env scripts/answer.mjs",
+    "server": "node --env-file=.env server/index.mjs",
+    "web": "vite --config web/vite.config.ts web",
+    "typecheck": "tsc --noEmit -p web/tsconfig.json",
+    "build:web": "vite build --config web/vite.config.ts web",
+    "start": "node server/index.mjs"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

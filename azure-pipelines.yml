@@ -1,0 +1,116 @@
+# Azure DevOps pipeline: build once, then deploy backend and frontend.
+#
+# Three stages so a broken build never reaches production, and so the two
+# deploys are independent — if the frontend deploy fails, the API is untouched.
+#
+# Variables to create in the pipeline UI (Pipelines > Edit > Variables):
+#   apiUrl              https://<your-app-service>.azurewebsites.net
+#   azureSubscription   name of the ARM service connection
+#   webAppName          your App Service name
+#   swaToken            Static Web Apps deployment token  (mark as SECRET)
+
+trigger:
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  NODE_VERSION: "22.x"
+
+stages:
+  # ---------------------------------------------------------------- BUILD ----
+  - stage: Build
+    displayName: Build and check
+    jobs:
+      - job: build
+        steps:
+          - task: NodeTool@0
+            displayName: Use Node $(NODE_VERSION)
+            inputs:
+              versionSpec: $(NODE_VERSION)
+
+          # `npm ci` not `npm install`: installs exactly what package-lock.json
+          # pins, so CI can never quietly build against a different version
+          # than the one tested locally.
+          - script: npm ci
+            displayName: Install dependencies
+
+          - script: npm run typecheck
+            displayName: TypeScript check
+
+          # The API URL is baked into the frontend bundle at build time — Vite
+          # substitutes import.meta.env.* during the build, not at runtime.
+          - script: npm run build:web
+            displayName: Build frontend
+            env:
+              VITE_API_URL: $(apiUrl)
+
+          # NOTE: the retrieval evaluation (npm run evaluate) deliberately does
+          # NOT run here. It needs live Azure OpenAI credentials and costs money
+          # per run. It stays a manual gate before changing retrieval.
+
+          - publish: web/dist
+            artifact: frontend
+
+          # Ship only what the server needs. Excluding web/ and knowledge-base/
+          # keeps the deployment small; the knowledge base is already indexed in
+          # Azure AI Search, so the running app never reads those files.
+          - script: |
+              mkdir -p backend
+              cp -r server scripts package.json package-lock.json backend/
+            displayName: Stage backend files
+
+          - publish: backend
+            artifact: backend
+
+  # -------------------------------------------------------- DEPLOY BACKEND ---
+  - stage: DeployApi
+    displayName: Deploy API to App Service
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - deployment: api
+        environment: production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: backend
+
+                - task: AzureWebApp@1
+                  displayName: Deploy to App Service
+                  inputs:
+                    azureSubscription: $(azureSubscription)
+                    appType: webAppLinux
+                    appName: $(webAppName)
+                    package: $(Pipeline.Workspace)/backend
+                    runtimeStack: "NODE|22-lts"
+                    # Azure builds dependencies on the server from package.json,
+                    # so node_modules is not uploaded.
+                    appSettings: >-
+                      -SCM_DO_BUILD_DURING_DEPLOYMENT true
+                      -WEBSITE_NODE_DEFAULT_VERSION ~22
+                    startUpCommand: "npm start"
+
+  # ------------------------------------------------------- DEPLOY FRONTEND ---
+  - stage: DeployWeb
+    displayName: Deploy frontend to Static Web Apps
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: web
+        steps:
+          - download: current
+            artifact: frontend
+
+          - task: AzureStaticWebApp@0
+            displayName: Deploy to Static Web Apps
+            inputs:
+              # Already built in the Build stage, so skip Oryx's own build.
+              app_location: $(Pipeline.Workspace)/frontend
+              skip_app_build: true
+              skip_api_build: true
+              azure_static_web_apps_api_token: $(swaToken)
