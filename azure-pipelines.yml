@@ -106,11 +106,21 @@ stages:
           - download: current
             artifact: frontend
 
+          # The Static Web Apps task runs inside a container and resolves
+          # app_location relative to the repo checkout, so the built files have
+          # to be copied in rather than referenced from the artifact directory.
+          - script: |
+              rm -rf "$(Build.SourcesDirectory)/dist"
+              cp -r "$(Pipeline.Workspace)/frontend" "$(Build.SourcesDirectory)/dist"
+              ls -la "$(Build.SourcesDirectory)/dist"
+            displayName: Stage built frontend
+
           - task: AzureStaticWebApp@0
             displayName: Deploy to Static Web Apps
             inputs:
               # Already built in the Build stage, so skip Oryx's own build.
-              app_location: $(Pipeline.Workspace)/frontend
+              app_location: "dist"
+              output_location: ""
               skip_app_build: true
               skip_api_build: true
               azure_static_web_apps_api_token: $(swaToken)
