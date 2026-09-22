@@ -3,7 +3,7 @@
 Ask about leave, pay, notice or redundancy in plain English and get an answer with **citations you
 can click and check**, drawn only from official Fair Work Ombudsman pages.
 
-**Live demo:** _(add URL after deployment)_
+**Live demo:** https://lemon-river-08ead7000.4.azurestaticapps.net
 
 > Unofficial learning project. Not affiliated with, endorsed by or connected to the Fair Work
 > Ombudsman. General information only — not legal advice.

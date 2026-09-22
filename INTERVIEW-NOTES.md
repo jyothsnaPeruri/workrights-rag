@@ -336,3 +336,64 @@ points to fairwork.gov.au for the same information — the user still gets somew
 refused; set the visitor limit to 2 and confirmed the 3rd got a 429 with Retry-After; confirmed
 an empty question, a 500-character question and a request from an unapproved origin are all
 rejected before any Azure call; confirmed the real origin still streams normally.
+
+---
+
+## Step 8 — Deployment on Azure with an Azure DevOps pipeline
+
+**Live:** https://lemon-river-08ead7000.4.azurestaticapps.net
+**Repo:** https://github.com/jyothsnaPeruri/workrights-rag
+
+**What I built:** `azure-pipelines.yml` — three stages. Build (npm ci, typecheck, Vite build,
+publish two artifacts), then DeployApi (App Service) and DeployWeb (Static Web Apps) as
+independent stages, so a frontend failure can't take down the API.
+
+**Q: Walk me through your deployment.**
+Code on GitHub, pipeline in Azure DevOps, deploying to two Azure services. Frontend on Static Web
+Apps (Free), API on App Service Linux F1 (Free) — both $0 permanently, so the demo survives the
+end of the trial credit. The pipeline authenticates through an ARM service connection backed by a
+service principal, scoped to a single resource group so the deploy identity can't touch anything
+else in the subscription.
+
+**Q: Why `npm ci` rather than `npm install` in CI?**
+`ci` installs exactly what package-lock.json pins and fails if the lock file disagrees with
+package.json. `install` can quietly resolve different versions, so CI would test something
+different from what I ran locally.
+
+**Q: How do secrets reach production?**
+Locally a gitignored `.env`. In Azure, App Service Application Settings — injected as environment
+variables before the process starts, so the code is identical in both places (twelve-factor
+config). The Static Web Apps deployment token is a *secret* pipeline variable: encrypted, masked
+in logs, unreadable once saved. Next step up would be Managed Identity, where App Service
+authenticates to Azure OpenAI with no key at all.
+
+**Q: Why doesn't the pipeline upload node_modules?**
+It ships source plus package.json and lets App Service build on the server
+(`SCM_DO_BUILD_DURING_DEPLOYMENT=true`). node_modules is hundreds of megabytes and can contain
+platform-specific binaries compiled for the build agent rather than the runtime. Building on the
+target is smaller and more reliable.
+
+**Q: Why isn't your evaluation suite in CI?**
+It needs live Azure credentials and costs money per run. It stays a manual gate before changing
+retrieval. CI does typecheck and build — the checks that are free, fast and deterministic.
+
+**Q: Tell me about deployment problems you hit.** (Two, both silent failures.)
+1. **App Service hostnames are no longer `<name>.azurewebsites.net`.** Azure appends a random
+   suffix (`workrights-api-apaudma8dxf4d8az.australiaeast-01...`) to prevent subdomain takeover —
+   if a predictable hostname were freed on delete, someone else could claim a domain users still
+   trusted. The pipeline deploys by app *name* so it succeeded; the frontend had been built with
+   a guessed *hostname* that didn't resolve.
+2. **A missing `https://` in the API URL variable.** Without a scheme the browser treats it as a
+   relative path, so the app called its own origin and got a 404 — no error in any log.
+Both needed a frontend rebuild, because Vite substitutes `import.meta.env.*` at build time, not
+at runtime. Reading the API URL from a runtime config endpoint would make it a config change
+instead, at the cost of an extra request on page load.
+
+**Q: The free tier sleeps. How did you handle that?**
+Measured cold start at ~17 seconds. The page calls `/api/health` on load, so the server starts
+waking while the visitor reads the intro, and shows "waking the server up, about 30 seconds" if
+it's still cold. Honest and free. Keeping it warm with a cron ping would abuse the free tier;
+paying $7/month for Always On would fix it properly if it mattered.
+
+**Verified in production:** health 200; a request with a forged Origin rejected 403; a real
+question streamed 140 tokens; citations open the source passage and link to fairwork.gov.au.
