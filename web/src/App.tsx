@@ -270,7 +270,7 @@ export default function App() {
       <aside className={`sidebar${sidebarOpen ? " open" : ""}`}>
         <div className="brand">
           <span className="mark" aria-hidden="true">
-            ⚖️
+            WR
           </span>
           Work Rights Q&amp;A
         </div>
@@ -333,7 +333,7 @@ export default function App() {
           </button>
           <div className="brand compact">
             <span className="mark" aria-hidden="true">
-              ⚖️
+              WR
             </span>
             Work Rights Q&amp;A
           </div>
@@ -361,42 +361,64 @@ export default function App() {
             turns.map((turn, i) =>
               turn.role === "user" ? (
                 <div key={i} className="turn user">
-                  <div className="text">{turn.text}</div>
+                  <div className="text">
+                    <p className="label">You asked</p>
+                    {turn.text}
+                  </div>
                 </div>
               ) : (
                 <div key={i} className="turn assistant">
-                  <span className="avatar" aria-hidden="true">
-                    ⚖️
-                  </span>
                   <div className="body">
                     {turn.text ? (
-                      <>
-                        <Body text={turn.text} sources={turn.sources ?? []} onCite={setOpenSource} />
-                        {turn.streaming && <span className="caret" />}
-                        {/* Only list sources the answer actually cited — a refusal
-                            citing nothing looked broken with five sources under it. */}
-                        {!turn.streaming && turn.sources?.some((s) => turn.text.includes(`[${s.n}]`)) && (
-                          <ul className="refs">
-                            {turn.sources
-                              .filter((s) => turn.text.includes(`[${s.n}]`))
-                              .map((s) => (
-                                <li key={s.n}>
-                                  <button onClick={() => setOpenSource(s)}>
-                                    <span className="n">{s.n}</span>
-                                    {s.title}
-                                    {s.heading ? ` — ${s.heading}` : ""}
-                                  </button>
-                                </li>
-                              ))}
-                          </ul>
-                        )}
-                      </>
+                      (() => {
+                        // Only count sources the answer actually cited. A refusal
+                        // cites nothing, and listing five unrelated sources under
+                        // "I couldn't find that" reads as a bug.
+                        const cited = (turn.sources ?? []).filter((s) => turn.text.includes(`[${s.n}]`));
+                        return (
+                          <>
+                            <p className="label">
+                              Answer
+                              {!turn.streaming && (
+                                <span className="grounded">
+                                  {cited.length
+                                    ? `grounded in ${cited.length} source${cited.length === 1 ? "" : "s"}`
+                                    : "no matching source"}
+                                </span>
+                              )}
+                            </p>
+                            <Body text={turn.text} sources={turn.sources ?? []} onCite={setOpenSource} />
+                            {turn.streaming && <span className="caret" />}
+                            {!turn.streaming && cited.length > 0 && (
+                              <div className="refs">
+                                <p className="refs-title">Sources</p>
+                                <ul>
+                                  {cited.map((s) => (
+                                    <li key={s.n}>
+                                      <button onClick={() => setOpenSource(s)}>
+                                        <span className="n">{s.n}</span>
+                                        <span className="ref-text">
+                                          {s.title}
+                                          {s.heading ? ` — ${s.heading}` : ""}
+                                        </span>
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()
                     ) : (
-                      <span className="pending" aria-label="Searching">
-                        <i />
-                        <i />
-                        <i />
-                      </span>
+                      <>
+                        <p className="label">Answer</p>
+                        <span className="pending" aria-label="Searching the documents">
+                          <i />
+                          <i />
+                          <i />
+                        </span>
+                      </>
                     )}
                   </div>
                 </div>
