@@ -75,7 +75,20 @@ export async function retrieve(question, top = TOP_K, mode = process.env.RETRIEV
     query.semanticConfiguration = "default-semantic";
   }
 
-  const result = await search.query(query);
+  // The semantic reranker has a free monthly allowance and is billed beyond it,
+  // so a query can fail on quota rather than on anything being wrong. Falling
+  // back to hybrid keeps answers coming — measurably worse ranking (95% -> 65%
+  // Hit@1 in testing) is far better than an error page.
+  let result;
+  try {
+    result = await search.query(query);
+  } catch (error) {
+    if (mode !== "semantic") throw error;
+    console.warn("semantic rerank unavailable, falling back to hybrid:", error.message);
+    delete query.semanticConfiguration;
+    query.queryType = "simple";
+    result = await search.query(query);
+  }
 
   const hits = result.value.map((doc) => ({
     score: doc["@search.score"],
