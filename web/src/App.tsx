@@ -1,12 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ask, warmUp, type Source } from "./api";
-
-interface Turn {
-  role: "user" | "assistant";
-  text: string;
-  sources?: Source[];
-  streaming?: boolean;
-}
+import { history, newId, titleFrom, type Conversation, type Turn } from "./storage";
 
 const STARTERS = [
   "How much annual leave do I get, and does it carry over?",
@@ -124,6 +118,9 @@ function Excerpt({ text }: { text: string }) {
 
 export default function App() {
   const [turns, setTurns] = useState<Turn[]>([]);
+  const [chats, setChats] = useState<Conversation[]>(() => history.load());
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -176,31 +173,86 @@ export default function App() {
     const question = text.trim();
     if (!question || busy) return;
 
+    const prior = turns;
     setError(null);
     setDraft("");
     grow(input.current);
     setBusy(true);
-    setTurns((all) => [...all, { role: "user", text: question }, { role: "assistant", text: "", streaming: true }]);
+    setTurns([...prior, { role: "user", text: question }, { role: "assistant", text: "", streaming: true }]);
 
-    const update = (change: (t: Turn) => Turn) =>
-      setTurns((all) => [...all.slice(0, -1), change(all[all.length - 1])]);
+    // Accumulate the answer in plain variables as well as in state. React can
+    // re-run a state updater, so anything with a side effect — minting an id,
+    // writing to localStorage — must not live inside one. Doing that is what
+    // produced two sidebar entries for a single conversation.
+    let answer = "";
+    let sources: Source[] | undefined;
+    const patch = (fields: Partial<Turn>) =>
+      setTurns((all) => [...all.slice(0, -1), { ...all[all.length - 1], ...fields }]);
 
     try {
       await ask(question, {
-        onToken: (token) => update((t) => ({ ...t, text: t.text + token })),
-        onSources: (sources) => {
-          update((t) => ({ ...t, sources }));
-          if (sources[0]?.saved) setAsAt(sources[0].saved);
+        onToken: (token) => {
+          answer += token;
+          patch({ text: answer });
+        },
+        onSources: (found) => {
+          sources = found;
+          patch({ sources: found });
+          if (found[0]?.saved) setAsAt(found[0].saved);
         },
       }).done;
-      update((t) => ({ ...t, streaming: false }));
+
+      const finished: Turn[] = [
+        ...prior,
+        { role: "user", text: question },
+        { role: "assistant", text: answer, sources },
+      ];
+      setTurns(finished);
+
+      const id = activeId ?? newId();
+      setActiveId(id);
+      setChats(
+        history.save({
+          id,
+          title: titleFrom(finished.find((t) => t.role === "user")?.text ?? question),
+          turns: finished,
+          updatedAt: Date.now(),
+        }),
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
-      // Drop the empty answer, but keep a partial one if tokens had arrived.
-      setTurns((all) => (all[all.length - 1].text ? all : all.slice(0, -2)));
+      // Keep a partial answer if tokens arrived; otherwise drop the empty pair.
+      setTurns(
+        answer
+          ? [...prior, { role: "user", text: question }, { role: "assistant", text: answer, sources }]
+          : prior,
+      );
     } finally {
       setBusy(false);
       input.current?.focus();
+    }
+  }
+
+  function startNewChat() {
+    setTurns([]);
+    setActiveId(null);
+    setError(null);
+    setSidebarOpen(false);
+    input.current?.focus();
+  }
+
+  function openChat(chat: Conversation) {
+    setTurns(chat.turns);
+    setActiveId(chat.id);
+    setError(null);
+    setSidebarOpen(false);
+  }
+
+  function deleteChat(id: string) {
+    setChats(history.remove(id));
+    if (id === activeId) {
+      setTurns([]);
+      setActiveId(null);
     }
   }
 
@@ -213,18 +265,80 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className="topbar">
+      {sidebarOpen && <div className="scrim" onClick={() => setSidebarOpen(false)} />}
+
+      <aside className={`sidebar${sidebarOpen ? " open" : ""}`}>
         <div className="brand">
           <span className="mark" aria-hidden="true">
             ⚖️
           </span>
           Work Rights Q&amp;A
+        </div>
+
+        <button className="newchat" onClick={startNewChat} disabled={busy}>
+          <span aria-hidden="true">+</span> New chat
+        </button>
+
+        <p className="rail-label">Recent</p>
+        {chats.length === 0 ? (
+          <p className="rail-empty">Your past questions will appear here.</p>
+        ) : (
+          <ul className="chats">
+            {chats.map((chat) => (
+              <li key={chat.id} className={chat.id === activeId ? "active" : undefined}>
+                <button className="chat-open" onClick={() => openChat(chat)} disabled={busy} title={chat.title}>
+                  {chat.title}
+                </button>
+                <button
+                  className="chat-del"
+                  onClick={() => deleteChat(chat.id)}
+                  disabled={busy}
+                  aria-label={`Delete conversation: ${chat.title}`}
+                  title="Delete"
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="rail-foot">
+          {chats.length > 0 && (
+            <button
+              className="linky"
+              onClick={() => {
+                setChats(history.clear());
+                setTurns([]);
+                setActiveId(null);
+              }}
+              disabled={busy}
+            >
+              Clear history
+            </button>
+          )}
+          <p>Chats are saved in this browser only — never sent to a server.</p>
+        </div>
+      </aside>
+
+      <div className="main">
+        <div className="topbar">
+          <button
+            className="hamburger"
+            onClick={() => setSidebarOpen((v) => !v)}
+            aria-label="Conversations"
+            aria-expanded={sidebarOpen}
+          >
+            ☰
+          </button>
+          <div className="brand compact">
+            <span className="mark" aria-hidden="true">
+              ⚖️
+            </span>
+            Work Rights Q&amp;A
+          </div>
           <span className="tag">Unofficial demo</span>
         </div>
-        <button className="ghost" onClick={() => setTurns([])} disabled={busy || turns.length === 0}>
-          New chat
-        </button>
-      </div>
 
       <div className="thread">
         <div className="column">
@@ -357,6 +471,8 @@ export default function App() {
             </span>
           </p>
         </div>
+      </div>
+
       </div>
 
       {openSource && (
