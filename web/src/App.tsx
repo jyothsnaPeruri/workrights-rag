@@ -1,24 +1,93 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ask, warmUp, type Source } from "./api";
 
-interface Message {
+interface Turn {
   role: "user" | "assistant";
   text: string;
   sources?: Source[];
+  streaming?: boolean;
 }
 
-const EXAMPLES = [
-  "How much annual leave do I get?",
-  "How much notice after 4 years?",
-  "Can my boss refuse my leave request?",
-  "Do I get sick leave on probation?",
+const STARTERS = [
+  "How much annual leave do I get, and does it carry over?",
+  "I've worked here 4 years — how much notice am I owed?",
+  "Can my manager refuse a leave request?",
+  "Do I still accrue sick leave during probation?",
 ];
 
+/* ------------------------------------------------------------------ text -- */
+
+/** Splits inline text into bold runs and citation markers. */
+function inline(text: string, sources: Source[], onCite: (s: Source) => void) {
+  return text
+    // Move markers after sentence punctuation and close up the space before
+    // them, so "under the NES [3]." sets as "under the NES.³" rather than
+    // leaving a gap and an orphaned full stop.
+    .replace(/\s*((?:\[\d+\])+)\s*([.,;:])/g, "$2$1")
+    .replace(/\s+(\[\d+\])/g, "$1")
+    .split(/(\*\*[^*]+\*\*|\[\d+\])/g)
+    .map((part, i) => {
+      const bold = part.match(/^\*\*([^*]+)\*\*$/);
+      if (bold) return <strong key={i}>{bold[1]}</strong>;
+
+      const n = Number(part.match(/^\[(\d+)\]$/)?.[1]);
+      const source = sources.find((s) => s.n === n);
+      if (!source) return <span key={i}>{part}</span>;
+
+      return (
+        <button
+          key={i}
+          className="cite"
+          onClick={() => onCite(source)}
+          title={`${source.title}${source.heading ? ` — ${source.heading}` : ""}`}
+          aria-label={`Show source ${n}: ${source.title}`}
+        >
+          {n}
+        </button>
+      );
+    });
+}
+
 /**
- * Renders a source excerpt, turning Markdown pipe-tables back into real tables.
- * The notice-period and redundancy-pay tables are often the whole answer, and
- * raw `| 1 year or less | 1 week |` rows are hard to read in a popup.
+ * Renders the answer as paragraphs and lists. The model is asked for plain
+ * English with short paragraphs or bullets, so this handles exactly that —
+ * a full Markdown parser would be a dependency for two features we use.
  */
+function Body({ text, sources, onCite }: { text: string; sources: Source[]; onCite: (s: Source) => void }) {
+  const blocks: Array<{ list: boolean; lines: string[] }> = [];
+
+  for (const raw of text.split("\n")) {
+    const line = raw.trimEnd();
+    if (!line.trim()) {
+      blocks.push({ list: false, lines: [] }); // paragraph break
+      continue;
+    }
+    const isItem = /^\s*([-*•]|\d+[.)])\s+/.test(line);
+    const last = blocks[blocks.length - 1];
+    if (last && last.lines.length && last.list === isItem) last.lines.push(line);
+    else blocks.push({ list: isItem, lines: [line] });
+  }
+
+  return (
+    <>
+      {blocks
+        .filter((block) => block.lines.length)
+        .map((block, i) =>
+          block.list ? (
+            <ul key={i}>
+              {block.lines.map((line, j) => (
+                <li key={j}>{inline(line.replace(/^\s*([-*•]|\d+[.)])\s+/, ""), sources, onCite)}</li>
+              ))}
+            </ul>
+          ) : (
+            <p key={i}>{inline(block.lines.join(" "), sources, onCite)}</p>
+          ),
+        )}
+    </>
+  );
+}
+
+/** Renders a source excerpt, turning Markdown pipe-tables back into real tables. */
 function Excerpt({ text }: { text: string }) {
   const blocks: Array<{ table: boolean; lines: string[] }> = [];
   for (const line of text.split("\n")) {
@@ -28,8 +97,7 @@ function Excerpt({ text }: { text: string }) {
     else blocks.push({ table: isRow, lines: [line] });
   }
 
-  const cells = (row: string) =>
-    row.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
+  const cells = (row: string) => row.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
 
   return (
     <>
@@ -38,9 +106,7 @@ function Excerpt({ text }: { text: string }) {
           <table key={i} className="excerpt-table">
             <tbody>
               {block.lines.map((row, r) => (
-                <tr key={r}>
-                  {cells(row).map((cell, c) => (r === 0 ? <th key={c}>{cell}</th> : <td key={c}>{cell}</td>))}
-                </tr>
+                <tr key={r}>{cells(row).map((c, k) => (r === 0 ? <th key={k}>{c}</th> : <td key={k}>{c}</td>))}</tr>
               ))}
             </tbody>
           </table>
@@ -54,54 +120,39 @@ function Excerpt({ text }: { text: string }) {
   );
 }
 
-/**
- * Renders answer text, turning [1] markers into clickable citation chips.
- * Only citations the model actually used become buttons — a marker pointing at
- * a source that wasn't returned stays as plain text rather than breaking.
- */
-function AnswerText({ text, sources, onCite }: { text: string; sources: Source[]; onCite: (s: Source) => void }) {
-  return (
-    <>
-      {/* Pull any space before a citation marker into the marker, so
-          "notice [1]." renders as "notice¹." rather than "notice 1 ." */}
-      {text.replace(/\s+(\[\d+\])/g, "$1").split(/(\[\d+\])/g).map((part, i) => {
-        const n = Number(part.match(/^\[(\d+)\]$/)?.[1]);
-        const source = sources.find((s) => s.n === n);
-        if (!source) return <span key={i}>{part}</span>;
-        return (
-          <button
-            key={i}
-            className="cite"
-            onClick={() => onCite(source)}
-            title={`${source.title}${source.heading ? ` > ${source.heading}` : ""}`}
-          >
-            {n}
-          </button>
-        );
-      })}
-    </>
-  );
-}
+/* ------------------------------------------------------------------- app -- */
 
 export default function App() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [question, setQuestion] = useState("");
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [openSource, setOpenSource] = useState<Source | null>(null);
   const [asAt, setAsAt] = useState<string | null>(null);
   const [awake, setAwake] = useState(true);
+
   const bottom = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ block: "end" });
+  }, [turns]);
+
+  // Escape closes the source panel — expected behaviour for any modal dialog.
+  useEffect(() => {
+    if (!openSource) return;
+    const onKey = (e: globalThis.KeyboardEvent) => e.key === "Escape" && setOpenSource(null);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openSource]);
 
   // Start waking the free-tier backend immediately, while the visitor reads the
-  // intro — and tell them if it's still cold, rather than looking broken.
+  // intro — and say so if it's still cold, rather than looking broken.
   useEffect(() => {
     let cancelled = false;
-    setAwake(true);
     void warmUp().then((ok) => {
       if (cancelled || ok) return;
       setAwake(false);
-      // Keep trying; the server usually answers within ~40 seconds.
       const retry = setInterval(async () => {
         if (await warmUp()) {
           setAwake(true);
@@ -115,178 +166,211 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  // Escape closes the source panel — expected behaviour for any modal dialog.
-  useEffect(() => {
-    if (!openSource) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpenSource(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [openSource]);
+  function grow(el: HTMLTextAreaElement | null) {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }
 
   async function submit(text: string) {
-    const trimmed = text.trim();
-    if (!trimmed || busy) return;
+    const question = text.trim();
+    if (!question || busy) return;
 
     setError(null);
-    setQuestion("");
+    setDraft("");
+    grow(input.current);
     setBusy(true);
-    setMessages((all) => [...all, { role: "user", text: trimmed }, { role: "assistant", text: "" }]);
+    setTurns((all) => [...all, { role: "user", text: question }, { role: "assistant", text: "", streaming: true }]);
 
-    // Every update rewrites the last message, which is the streaming answer.
-    const updateAnswer = (change: (m: Message) => Message) =>
-      setMessages((all) => [...all.slice(0, -1), change(all[all.length - 1])]);
+    const update = (change: (t: Turn) => Turn) =>
+      setTurns((all) => [...all.slice(0, -1), change(all[all.length - 1])]);
 
     try {
-      await ask(trimmed, {
-        onToken: (token) => updateAnswer((m) => ({ ...m, text: m.text + token })),
+      await ask(question, {
+        onToken: (token) => update((t) => ({ ...t, text: t.text + token })),
         onSources: (sources) => {
-          updateAnswer((m) => ({ ...m, sources }));
+          update((t) => ({ ...t, sources }));
           if (sources[0]?.saved) setAsAt(sources[0].saved);
         },
       }).done;
+      update((t) => ({ ...t, streaming: false }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
-      // Drop the empty answer bubble, but keep a partial one if tokens arrived.
-      setMessages((all) => (all[all.length - 1].text ? all : all.slice(0, -2)));
+      // Drop the empty answer, but keep a partial one if tokens had arrived.
+      setTurns((all) => (all[all.length - 1].text ? all : all.slice(0, -2)));
     } finally {
       setBusy(false);
+      input.current?.focus();
     }
   }
 
-  function onSubmit(event: FormEvent) {
-    event.preventDefault();
-    void submit(question);
+  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void submit(draft);
+    }
   }
 
   return (
     <div className="app">
-      <header>
-        <h1>
-          <span aria-hidden="true">⚖️</span> Work Rights Q&amp;A
-        </h1>
-        <p>
-          Ask about Australian workplace entitlements in plain English. Every answer is drawn from the Fair Work
-          Ombudsman website, with sources you can check.
-        </p>
-        <p className="disclaimer">
-          <strong>Unofficial demo.</strong> Not affiliated with, endorsed by or connected to the Fair Work Ombudsman.
-          General information only — not legal advice. Always confirm at{" "}
-          <a href="https://www.fairwork.gov.au" target="_blank" rel="noreferrer">
-            fairwork.gov.au
-          </a>{" "}
-          or call the Fair Work Infoline on 13 13 94.
-          {asAt && <> Information as at {asAt}.</>}
-        </p>
-      </header>
-
-      <main className="chat">
-        {messages.length === 0 ? (
-          <div className="empty">
-            <p>Try one of these:</p>
-            <div className="examples">
-              {EXAMPLES.map((example) => (
-                <button key={example} onClick={() => submit(example)} disabled={busy}>
-                  {example}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          messages.map((message, i) => (
-            <article key={i} className={`bubble ${message.role}`}>
-              {message.role === "user" ? (
-                message.text
-              ) : message.text ? (
-                <>
-                  <AnswerText text={message.text} sources={message.sources ?? []} onCite={setOpenSource} />
-                  {/* Only show the source list if the answer actually cited something.
-                      A refusal ("that isn't in these documents") citing nothing looked
-                      broken when five unrelated sources were listed underneath it. */}
-                  {message.sources?.some((s) => message.text.includes(`[${s.n}]`)) && (
-                    <ul className="sources">
-                      {message.sources
-                        .filter((s) => message.text.includes(`[${s.n}]`))
-                        .map((source) => (
-                          <li key={source.n}>
-                            <button className="source-link" onClick={() => setOpenSource(source)}>
-                              [{source.n}] {source.title}
-                              {source.heading ? ` > ${source.heading}` : ""}
-                            </button>
-                          </li>
-                        ))}
-                    </ul>
-                  )}
-                </>
-              ) : (
-                <span className="thinking">Searching the Fair Work documents…</span>
-              )}
-            </article>
-          ))
-        )}
-        <div ref={bottom} />
-      </main>
-
-      {!awake && (
-        <p className="waking" role="status">
-          Waking the server up — this free demo sleeps when nobody's using it, and takes about 30
-          seconds to start. You can type your question now.
-        </p>
-      )}
-
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-
-      <form className="composer" onSubmit={onSubmit}>
-        <input
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          placeholder="Ask about leave, pay, notice, redundancy…"
-          maxLength={400}
-          disabled={busy}
-          aria-label="Your question"
-        />
-        <button type="submit" disabled={busy || !question.trim()}>
-          {busy ? "…" : "Ask"}
+      <div className="topbar">
+        <div className="brand">
+          <span className="mark" aria-hidden="true">
+            ⚖️
+          </span>
+          Work Rights Q&amp;A
+          <span className="tag">Unofficial demo</span>
+        </div>
+        <button className="ghost" onClick={() => setTurns([])} disabled={busy || turns.length === 0}>
+          New chat
         </button>
-      </form>
+      </div>
 
-      <footer>
-        Contains information from the Fair Work Ombudsman, © Fair Work Ombudsman{" "}
-        <a href="https://www.fairwork.gov.au" target="_blank" rel="noreferrer">
-          www.fairwork.gov.au
-        </a>
-        , licensed under{" "}
-        <a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noreferrer">
-          CC BY-NC 4.0
-        </a>
-        . Text was reformatted; wording unchanged. Built by{" "}
-        <a href="https://jyothsnaperuri.github.io/Jyothsna-portfolio/" target="_blank" rel="noreferrer">
-          Jyothsna (Jo) Peruri
-        </a>
-        .
-      </footer>
+      <div className="thread">
+        <div className="column">
+          {turns.length === 0 ? (
+            <div className="welcome">
+              <h1>What would you like to know?</h1>
+              <p>
+                Ask about Australian workplace entitlements in plain English. Every answer comes only from official
+                Fair Work Ombudsman pages, with sources you can open and check.
+              </p>
+              <div className="starters">
+                {STARTERS.map((s) => (
+                  <button key={s} onClick={() => submit(s)} disabled={busy}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            turns.map((turn, i) =>
+              turn.role === "user" ? (
+                <div key={i} className="turn user">
+                  <div className="text">{turn.text}</div>
+                </div>
+              ) : (
+                <div key={i} className="turn assistant">
+                  <span className="avatar" aria-hidden="true">
+                    ⚖️
+                  </span>
+                  <div className="body">
+                    {turn.text ? (
+                      <>
+                        <Body text={turn.text} sources={turn.sources ?? []} onCite={setOpenSource} />
+                        {turn.streaming && <span className="caret" />}
+                        {/* Only list sources the answer actually cited — a refusal
+                            citing nothing looked broken with five sources under it. */}
+                        {!turn.streaming && turn.sources?.some((s) => turn.text.includes(`[${s.n}]`)) && (
+                          <ul className="refs">
+                            {turn.sources
+                              .filter((s) => turn.text.includes(`[${s.n}]`))
+                              .map((s) => (
+                                <li key={s.n}>
+                                  <button onClick={() => setOpenSource(s)}>
+                                    <span className="n">{s.n}</span>
+                                    {s.title}
+                                    {s.heading ? ` — ${s.heading}` : ""}
+                                  </button>
+                                </li>
+                              ))}
+                          </ul>
+                        )}
+                      </>
+                    ) : (
+                      <span className="pending" aria-label="Searching">
+                        <i />
+                        <i />
+                        <i />
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ),
+            )
+          )}
+          <div ref={bottom} />
+        </div>
+      </div>
+
+      <div className="dock">
+        <div className="column" style={{ paddingTop: 0 }}>
+          {!awake && (
+            <p className="notice" role="status">
+              Waking the server — this free demo sleeps when nobody's using it and takes about 30 seconds to start.
+              You can type your question now.
+            </p>
+          )}
+          {error && (
+            <p className="notice error" role="alert">
+              {error}
+            </p>
+          )}
+
+          <form
+            className="composer"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submit(draft);
+            }}
+          >
+            <textarea
+              ref={input}
+              rows={1}
+              value={draft}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                grow(e.target);
+              }}
+              onKeyDown={onKeyDown}
+              placeholder="Ask a question…"
+              maxLength={400}
+              disabled={busy}
+              aria-label="Your question"
+            />
+            <button className="send" type="submit" disabled={busy || !draft.trim()} aria-label="Send">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 19V5M5 12l7-7 7 7" />
+              </svg>
+            </button>
+          </form>
+
+          <p className="footnote">
+            General information only — not legal advice. Confirm at{" "}
+            <a href="https://www.fairwork.gov.au" target="_blank" rel="noreferrer">
+              fairwork.gov.au
+            </a>{" "}
+            or call 13 13 94.
+            {/* The CC BY-NC licence requires attribution, a link to the licence,
+                a statement of changes, and no implication of endorsement. */}
+            <span className="fine">
+              Unofficial demo, not endorsed by the Fair Work Ombudsman. Content ©&nbsp;Fair Work Ombudsman,{" "}
+              <a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noreferrer">
+                CC&nbsp;BY-NC&nbsp;4.0
+              </a>
+              , reformatted; wording unchanged.
+              {asAt && <> As at {asAt}.</>} Built by{" "}
+              <a href="https://jyothsnaperuri.github.io/Jyothsna-portfolio/" target="_blank" rel="noreferrer">
+                Jyothsna&nbsp;(Jo)&nbsp;Peruri
+              </a>
+              .
+            </span>
+          </p>
+        </div>
+      </div>
 
       {openSource && (
         <div className="overlay" onClick={() => setOpenSource(null)}>
-          <div className="panel" role="dialog" aria-label="Source passage" onClick={(e) => e.stopPropagation()}>
-            <header>
+          <div className="panel" role="dialog" aria-modal="true" aria-label="Source passage" onClick={(e) => e.stopPropagation()}>
+            <div className="panel-head">
               <strong>
-                [{openSource.n}] {openSource.title}
-                {openSource.heading ? ` > ${openSource.heading}` : ""}
+                {openSource.title}
+                {openSource.heading ? ` — ${openSource.heading}` : ""}
               </strong>
               <button onClick={() => setOpenSource(null)} aria-label="Close">
                 ✕
               </button>
-            </header>
+            </div>
             <Excerpt text={openSource.excerpt} />
             <a href={openSource.url} target="_blank" rel="noreferrer">
               Read the full page on fairwork.gov.au →
