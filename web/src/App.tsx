@@ -399,27 +399,16 @@ export default function App() {
 
         <div className="rail-foot">
           {providerState?.admin ? (
-            <div className="admin-box">
-              <p className="label">Model provider</p>
-              <select value={provider ?? ""} onChange={(e) => setProvider(e.target.value)} disabled={busy}>
-                {providerState.providers.map((p) => (
-                  <option key={p.name} value={p.name}>
-                    {p.label}
-                    {p.name === providerState.default ? " (default)" : ""}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="linky"
-                onClick={() => {
-                  setToken(null);
-                  setProvider(providerState.default);
-                  setProviderState({ ...providerState, admin: false, providers: [] });
-                }}
-              >
-                Sign out
-              </button>
-            </div>
+            <button
+              className="linky"
+              onClick={() => {
+                setToken(null);
+                setProvider(providerState.default);
+                setProviderState({ ...providerState, admin: false, providers: [] });
+              }}
+            >
+              Sign out (admin)
+            </button>
           ) : (
             providerState?.adminAvailable && (
               <button className="linky" onClick={() => setShowLogin(true)}>
@@ -589,11 +578,31 @@ export default function App() {
               disabled={busy}
               aria-label="Your question"
             />
-            <button className="send" type="submit" disabled={busy || !draft.trim()} aria-label="Send">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 19V5M5 12l7-7 7 7" />
-              </svg>
-            </button>
+            <div className="composer-bar">
+              {/* Model picker sits with the input, like a chat client's model
+                  menu. Visitors never see it: the server only accepts a
+                  provider from a signed-in admin. */}
+              {providerState?.admin && providerState.providers.length > 0 ? (
+                <label className="model-pick">
+                  <span className="model-pick-label">Model</span>
+                  <select value={provider ?? ""} onChange={(e) => setProvider(e.target.value)} disabled={busy}>
+                    {providerState.providers.map((p) => (
+                      <option key={p.name} value={p.name}>
+                        {p.label}
+                        {p.name === providerState.default ? " · default" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <span />
+              )}
+              <button className="send" type="submit" disabled={busy || !draft.trim()} aria-label="Send">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 19V5M5 12l7-7 7 7" />
+                </svg>
+              </button>
+            </div>
           </form>
 
           <p className="footnote">
