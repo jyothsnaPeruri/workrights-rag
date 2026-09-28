@@ -6,7 +6,7 @@
 //   - global daily cap: bounds the bill absolutely. It doesn't care who you
 //     are, so it can't be bypassed. This is the real protection.
 
-import { env, search as searchApi } from "../scripts/azure.mjs";
+import { search } from "../scripts/azure.mjs";
 
 // Tunable without a code change, so limits can be tightened from the hosting
 // dashboard if the demo ever gets unwanted attention.
@@ -53,44 +53,23 @@ export function checkVisitor(ip) {
 // reuses the search service the app already depends on.
 
 const USAGE_INDEX = "usage";
-const SEARCH_API_VERSION = "2024-07-01";
-
-const usageUrl = (suffix) =>
-  `${env("AZURE_SEARCH_ENDPOINT")}/indexes/${USAGE_INDEX}${suffix}?api-version=${SEARCH_API_VERSION}`;
 
 const today = () => new Date().toISOString().slice(0, 10);
 
 export async function ensureUsageIndex() {
-  const response = await fetch(usageUrl(""), {
-    method: "PUT",
-    headers: searchApi.headers(),
-    body: JSON.stringify({
-      name: USAGE_INDEX,
-      fields: [
-        { name: "id", type: "Edm.String", key: true },
-        { name: "day", type: "Edm.String", filterable: true },
-        { name: "count", type: "Edm.Int32" },
-      ],
-    }),
+  await search.createIndex({
+    name: USAGE_INDEX,
+    fields: [
+      { name: "id", type: "Edm.String", key: true },
+      { name: "day", type: "Edm.String", filterable: true },
+      { name: "count", type: "Edm.Int32" },
+    ],
   });
-  if (!response.ok) throw new Error(`Could not create usage index: ${await response.text()}`);
 }
 
-async function readCount(day) {
-  const response = await fetch(usageUrl(`/docs/${day}`), { headers: searchApi.headers() });
-  if (response.status === 404) return 0;
-  if (!response.ok) throw new Error(`Usage read failed: ${response.status}`);
-  return (await response.json()).count ?? 0;
-}
+const readCount = async (day) => (await search.getDocument(USAGE_INDEX, day))?.count ?? 0;
 
-async function writeCount(day, count) {
-  const response = await fetch(usageUrl("/docs/index"), {
-    method: "POST",
-    headers: searchApi.headers(),
-    body: JSON.stringify({ value: [{ "@search.action": "mergeOrUpload", id: day, day, count }] }),
-  });
-  if (!response.ok) throw new Error(`Usage write failed: ${response.status}`);
-}
+const writeCount = (day, count) => search.upload(USAGE_INDEX, [{ id: day, day, count }]);
 
 // Read-then-write is not atomic, so two simultaneous requests can both read the
 // same number and one increment is lost. At this traffic level the drift is a

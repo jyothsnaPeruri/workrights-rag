@@ -5,7 +5,8 @@
 // question is always "did retrieval hand the model the right text?" — and this
 // module is how you find out.
 
-import { embed, search } from "./azure.mjs";
+import { search } from "./azure.mjs";
+import { getProvider } from "./providers.mjs";
 
 export const TOP_K = 8;
 
@@ -54,8 +55,13 @@ function diversify(hits, top) {
  * redundancy pay embedded better than the table *of* redundancy pay. Adding the
  * keyword arm moved the table to 1st.
  */
-export async function retrieve(question, top = TOP_K, mode = process.env.RETRIEVAL_MODE ?? "semantic") {
-  const [vector] = await embed([question]);
+export async function retrieve(question, { top = TOP_K, mode = process.env.RETRIEVAL_MODE ?? "semantic", provider } = {}) {
+  const models = getProvider(provider);
+  // Gemini embeds questions and passages into deliberately different spaces,
+  // which improves retrieval; Azure uses one space for both.
+  const vector = models.embedQuery
+    ? await models.embedQuery(question)
+    : (await models.embed([question]))[0];
   const candidates = top * CANDIDATE_MULTIPLIER;
 
   const query = {
@@ -79,15 +85,16 @@ export async function retrieve(question, top = TOP_K, mode = process.env.RETRIEV
   // so a query can fail on quota rather than on anything being wrong. Falling
   // back to hybrid keeps answers coming — measurably worse ranking (95% -> 65%
   // Hit@1 in testing) is far better than an error page.
+  const index = models.index();
   let result;
   try {
-    result = await search.query(query);
+    result = await search.query(index, query);
   } catch (error) {
     if (mode !== "semantic") throw error;
     console.warn("semantic rerank unavailable, falling back to hybrid:", error.message);
     delete query.semanticConfiguration;
     query.queryType = "simple";
-    result = await search.query(query);
+    result = await search.query(index, query);
   }
 
   const hits = result.value.map((doc) => ({

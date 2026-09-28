@@ -14,12 +14,15 @@
     "web": "vite --config web/vite.config.ts web",
     "typecheck": "tsc --noEmit -p web/tsconfig.json",
     "build:web": "vite build --config web/vite.config.ts web",
-    "start": "node server/index.mjs"
+    "start": "node server/index.mjs",
+    "admin:hash": "node scripts/admin-hash.mjs",
+    "ingest:free": "node --env-file=.env scripts/ingest.mjs free"
   },
   "dependencies": {
     "cheerio": "^1.2.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },

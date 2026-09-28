@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import cors from "cors";
 import express from "express";
 import { answerQuestion } from "../scripts/answer.mjs";
+import { availableProviders, defaultProvider, PROVIDERS } from "../scripts/providers.mjs";
+import { adminConfigured, isAdmin, login } from "./auth.mjs";
 import { checkVisitor, consumeGlobalQuota, ensureUsageIndex, LIMITS } from "./limits.mjs";
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -38,6 +40,42 @@ app.use("/api/ask", (req, res, next) => {
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
+// What the client may offer. Visitors are told only the default; an
+// authenticated admin also gets the list they're allowed to switch between.
+app.get("/api/providers", (req, res) => {
+  const admin = isAdmin(req);
+  res.json({
+    default: defaultProvider(),
+    admin,
+    adminAvailable: adminConfigured(),
+    providers: admin ? availableProviders() : [],
+  });
+});
+
+// Deliberately rate-limited: this endpoint is the only thing standing between
+// the public internet and the provider switch, and scrypt makes each attempt
+// costly for us as well as for an attacker.
+const loginAttempts = new Map();
+
+app.post("/api/admin/login", async (req, res) => {
+  const ip = req.ip ?? "unknown";
+  const now = Date.now();
+  const recent = (loginAttempts.get(ip) ?? []).filter((t) => now - t < 15 * 60 * 1000);
+  if (recent.length >= 8) {
+    return res.status(429).json({ error: "Too many attempts. Try again in 15 minutes." });
+  }
+  recent.push(now);
+  loginAttempts.set(ip, recent);
+
+  const token = await login(req.body?.username, req.body?.password);
+  // One message for both wrong-username and wrong-password: saying which was
+  // wrong tells an attacker half the answer.
+  if (!token) return res.status(401).json({ error: "Incorrect username or password." });
+
+  loginAttempts.delete(ip);
+  res.json({ token, providers: availableProviders(), default: defaultProvider() });
+});
+
 app.post("/api/ask", async (req, res) => {
   const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
   if (!question) {
@@ -47,6 +85,23 @@ app.post("/api/ask", async (req, res) => {
     return res.status(400).json({
       error: `That question is a bit long — please keep it under ${LIMITS.questionChars} characters.`,
     });
+  }
+
+  // Visitors always get the default provider. Only an authenticated admin may
+  // name one, so nobody can steer the demo onto the paid models.
+  let provider = defaultProvider();
+  const requested = req.body?.provider;
+  if (requested && requested !== provider) {
+    if (!isAdmin(req)) {
+      return res.status(403).json({ error: "Only an admin can choose the model provider." });
+    }
+    if (!PROVIDERS[requested]) {
+      return res.status(400).json({ error: `Unknown provider: ${requested}` });
+    }
+    if (!PROVIDERS[requested].configured()) {
+      return res.status(503).json({ error: `${requested} is not configured on this server.` });
+    }
+    provider = requested;
   }
 
   const visitor = checkVisitor(req.ip ?? "unknown");
@@ -95,6 +150,7 @@ app.post("/api/ask", async (req, res) => {
 
   try {
     const { sources } = await answerQuestion(question, {
+      provider,
       onToken: (token) => {
         if (!closed) send("token", token);
       },
@@ -114,7 +170,7 @@ app.post("/api/ask", async (req, res) => {
           excerpt: source.content.split("\n\n").slice(1).join("\n\n"),
         })),
       );
-      send("done", {});
+      send("done", { provider });
     }
   } catch (error) {
     console.error("ask failed:", error);

@@ -3,7 +3,7 @@
 // Retrieval (retrieve.mjs) finds the relevant text; this turns it into a
 // readable, cited answer. The prompt does most of the work — see SYSTEM_PROMPT.
 
-import { chat } from "./azure.mjs";
+import { getProvider } from "./providers.mjs";
 import { retrieve } from "./retrieve.mjs";
 
 // Every rule here exists because of a specific failure mode:
@@ -40,18 +40,20 @@ function buildUserMessage(question, sources) {
  * Returns the answer plus the sources, so a caller can render citations that
  * link back to the official page.
  */
-export async function answerQuestion(question, { onToken } = {}) {
-  const sources = await retrieve(question);
+export async function answerQuestion(question, { onToken, provider } = {}) {
+  const models = getProvider(provider);
+  const sources = await retrieve(question, { provider });
 
   if (sources.length === 0) {
     return {
       answer: "I couldn't find anything about that in the Fair Work documents I have. Try rephrasing, or check fairwork.gov.au.",
       sources: [],
       usage: null,
+      provider: models.name,
     };
   }
 
-  const { text, usage } = await chat(
+  const { text, usage } = await models.chat(
     [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: buildUserMessage(question, sources) },
@@ -59,7 +61,7 @@ export async function answerQuestion(question, { onToken } = {}) {
     { onToken },
   );
 
-  return { answer: text.trim(), sources, usage };
+  return { answer: text.trim(), sources, usage, provider: models.name };
 }
 
 // --- CLI: npm run ask "your question" --------------------------------------
