@@ -14,6 +14,7 @@
 // Usage: npm run evaluate
 
 import { readFile } from "node:fs/promises";
+import { getProvider } from "./providers.mjs";
 import { retrieve, TOP_K } from "./retrieve.mjs";
 
 const QUESTIONS_FILE = new URL("../knowledge-base/TEST-QUESTIONS.md", import.meta.url);
@@ -30,14 +31,16 @@ async function loadQuestions() {
   }));
 }
 
+const provider = process.argv[2];
+const models = getProvider(provider);
 const questions = await loadQuestions();
 if (questions.length === 0) throw new Error("No questions parsed from TEST-QUESTIONS.md");
 
-console.log(`Evaluating retrieval on ${questions.length} questions (top ${TOP_K})\n`);
+console.log(`Evaluating ${models.label} on ${questions.length} questions (top ${TOP_K}, index "${models.index()}")\n`);
 
 const results = [];
 for (const q of questions) {
-  const hits = await retrieve(q.question);
+  const hits = await retrieve(q.question, { provider });
   const rank = hits.findIndex((hit) => hit.sourceFile === q.expected) + 1; // 0 = not found
   results.push({ ...q, rank, hits });
 

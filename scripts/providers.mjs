@@ -54,10 +54,13 @@ const azure = {
 const free = {
   name: "free",
   label: "Groq + Gemini",
-  dimensions: 768, // Gemini text-embedding-004
+  // gemini-embedding-001 returns 3072 dimensions by default but supports
+  // Matryoshka truncation, so we ask for 768: a quarter of the index size and
+  // faster vector comparisons, for a negligible quality loss at this corpus size.
+  dimensions: 768,
   index: () => optionalEnv("FREE_SEARCH_INDEX") ?? "workrights-free",
-  chatModel: () => optionalEnv("GROQ_CHAT_MODEL") ?? "llama-3.3-70b-versatile",
-  embeddingModel: () => optionalEnv("GEMINI_EMBEDDING_MODEL") ?? "text-embedding-004",
+  chatModel: () => optionalEnv("GROQ_CHAT_MODEL") ?? "openai/gpt-oss-120b",
+  embeddingModel: () => optionalEnv("GEMINI_EMBEDDING_MODEL") ?? "gemini-embedding-001",
 
   configured: () => Boolean(process.env.GROQ_API_KEY && process.env.GEMINI_API_KEY),
 
@@ -66,7 +69,7 @@ const free = {
     const model = `models/${free.embeddingModel()}`;
     const url = `${GEMINI_BASE}/${model}:batchEmbedContents?key=${env("GEMINI_API_KEY")}`;
     const out = [];
-    const BATCH = 100; // Gemini's per-request cap
+    const BATCH = 25; // small enough to stay inside the free tier's per-request limits
     for (let i = 0; i < texts.length; i += BATCH) {
       const data = await postJson(
         url,
@@ -79,6 +82,7 @@ const free = {
             // questions into slightly different spaces on purpose, which
             // improves retrieval. The caller says which via `taskType`.
             taskType: "RETRIEVAL_DOCUMENT",
+            outputDimensionality: free.dimensions,
           })),
         },
         "Gemini embedding",
@@ -95,19 +99,29 @@ const free = {
     const data = await postJson(
       url,
       {},
-      { model, content: { parts: [{ text }] }, taskType: "RETRIEVAL_QUERY" },
+      {
+        model,
+        content: { parts: [{ text }] },
+        taskType: "RETRIEVAL_QUERY",
+        outputDimensionality: free.dimensions,
+      },
       "Gemini query embedding",
     );
     return data.embedding.values;
   },
 
-  chat(messages, options) {
+  chat(messages, options = {}) {
     // Groq speaks the OpenAI protocol, so the request shape is identical.
+    //
+    // gpt-oss is a reasoning model: it emits hidden reasoning tokens before the
+    // answer, and those count against max_tokens. A 700-token budget that is
+    // ample for Azure can be spent entirely on thinking here, leaving an empty
+    // reply. So: ask for the shortest reasoning, and raise the ceiling.
     return chatStream(
       `${GROQ_BASE}/chat/completions`,
       { Authorization: `Bearer ${env("GROQ_API_KEY")}` },
-      { messages, model: free.chatModel() },
-      options,
+      { messages, model: free.chatModel(), reasoning_effort: "low" },
+      { maxTokens: 1400, ...options },
     );
   },
 };

@@ -16,7 +16,8 @@
     "build:web": "vite build --config web/vite.config.ts web",
     "start": "node server/index.mjs",
     "admin:hash": "node scripts/admin-hash.mjs",
-    "ingest:free": "node --env-file=.env scripts/ingest.mjs free"
+    "ingest:free": "node --env-file=.env scripts/ingest.mjs free",
+    "set-secret": "node scripts/set-secret.mjs"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

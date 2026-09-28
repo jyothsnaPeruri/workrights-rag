@@ -9,19 +9,46 @@ export function env(name) {
 
 export const optionalEnv = (name) => process.env[name]?.trim() || undefined;
 
-export async function postJson(url, headers, body, what) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!response.ok) {
-    const message = data?.error?.message ?? JSON.stringify(data) ?? response.statusText;
-    throw new Error(`${what} failed (HTTP ${response.status}): ${message}`);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * How long to wait before retrying, in ms, or null if the error isn't retryable.
+ * Free tiers rate-limit aggressively and usually say exactly how long to wait —
+ * Google in an RPC RetryInfo detail, most others in a Retry-After header.
+ * Honouring that beats a blind exponential backoff.
+ */
+function retryDelay(response, data, attempt) {
+  if (response.status !== 429 && response.status < 500) return null;
+
+  const header = Number(response.headers.get("retry-after"));
+  if (Number.isFinite(header) && header > 0) return header * 1000;
+
+  const info = data?.error?.details?.find((d) => d["@type"]?.endsWith("RetryInfo"));
+  const seconds = Number.parseFloat(info?.retryDelay ?? "");
+  if (Number.isFinite(seconds) && seconds > 0) return Math.ceil(seconds * 1000) + 500;
+
+  return Math.min(2 ** attempt * 1000, 30_000);
+}
+
+export async function postJson(url, headers, body, what, { retries = 4 } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    });
+    const text = await response.text();
+    const data = text ? JSON.parse(text) : null;
+    if (response.ok) return data;
+
+    const wait = attempt < retries ? retryDelay(response, data, attempt) : null;
+    if (wait === null) {
+      const message = data?.error?.message ?? JSON.stringify(data) ?? response.statusText;
+      throw new Error(`${what} failed (HTTP ${response.status}): ${message}`);
+    }
+    console.warn(`  ${what}: rate limited, waiting ${Math.round(wait / 1000)}s...`);
+    await sleep(wait);
   }
-  return data;
 }
 
 /**
