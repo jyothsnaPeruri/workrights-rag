@@ -1,3 +1,5 @@
+import { authHeaders } from "./admin";
+
 // Empty in development: the Vite dev server proxies /api to localhost:8787, so
 // the browser sees one origin. In production this is baked in at build time and
 // points at the App Service backend, which is a different origin — hence CORS.
@@ -37,14 +39,18 @@ interface AskHandlers {
  * Returns a function that aborts the request, so the UI can cancel cleanly
  * when the user navigates away or asks something else.
  */
-export function ask(question: string, handlers: AskHandlers): { done: Promise<void>; abort: () => void } {
+export function ask(
+  question: string,
+  handlers: AskHandlers,
+  provider?: string,
+): { done: Promise<void>; abort: () => void } {
   const controller = new AbortController();
 
   const done = (async () => {
     const response = await fetch(`${API}/api/ask`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ question, provider }),
       signal: controller.signal,
     });
 

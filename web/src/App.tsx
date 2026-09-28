@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ask, warmUp, type Source } from "./api";
 import { history, newId, titleFrom, type Conversation, type Turn } from "./storage";
+import { adminLogin, loadProviderState, setToken, type ProviderState } from "./admin";
 
 const STARTERS = [
   "How much annual leave do I get, and does it carry over?",
@@ -11,9 +12,16 @@ const STARTERS = [
 
 /* ------------------------------------------------------------------ text -- */
 
+/**
+ * Some models (Groq's gpt-oss family) write citation markers with full-width
+ * brackets, 【1】, regardless of what the prompt asks for. Normalise to [1] so
+ * the parser and the "which sources were cited" check both see the same thing.
+ */
+const normaliseCitations = (text: string) => text.replace(/【\s*(\d+)\s*】/g, "[$1]");
+
 /** Splits inline text into bold runs and citation markers. */
 function inline(text: string, sources: Source[], onCite: (s: Source) => void) {
-  return text
+  return normaliseCitations(text)
     // Move markers after sentence punctuation and close up the space before
     // them, so "under the NES [3]." sets as "under the NES.³" rather than
     // leaving a gap and an orphaned full stop.
@@ -114,6 +122,70 @@ function Excerpt({ text }: { text: string }) {
   );
 }
 
+/**
+ * Admin sign-in. Only the model-provider switch sits behind it — visitors never
+ * see this, and there is no visitor sign-up at all.
+ */
+function LoginDialog({ onDone, onClose }: { onDone: (state: ProviderState) => void; onClose: () => void }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      onDone(await adminLogin(username, password));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Sign-in failed.");
+      setPassword("");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="overlay" onClick={onClose}>
+      <form className="panel login" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+        <div className="panel-head">
+          <strong>Admin sign-in</strong>
+          <button type="button" onClick={onClose} aria-label="Close">
+            ✕
+          </button>
+        </div>
+        <p className="login-note">
+          Signing in only unlocks the model-provider switch. Visitors need no account.
+        </p>
+
+        <label>
+          Username
+          <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus />
+        </label>
+        <label>
+          Password
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+          />
+        </label>
+
+        {error && (
+          <p className="notice error" role="alert">
+            {error}
+          </p>
+        )}
+        <button className="primary" type="submit" disabled={busy || !username || !password}>
+          {busy ? "Checking…" : "Sign in"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------- app -- */
 
 export default function App() {
@@ -127,6 +199,9 @@ export default function App() {
   const [openSource, setOpenSource] = useState<Source | null>(null);
   const [asAt, setAsAt] = useState<string | null>(null);
   const [awake, setAwake] = useState(true);
+  const [providerState, setProviderState] = useState<ProviderState | null>(null);
+  const [provider, setProvider] = useState<string | null>(null);
+  const [showLogin, setShowLogin] = useState(false);
 
   const bottom = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -163,6 +238,19 @@ export default function App() {
     };
   }, []);
 
+  // Which providers this client may offer. Anonymous visitors get the default
+  // and no list; an admin token unlocks the rest.
+  useEffect(() => {
+    loadProviderState()
+      .then((state) => {
+        setProviderState(state);
+        setProvider((current) => current ?? state.default);
+      })
+      .catch(() => {
+        /* the health check already surfaces a server that isn't reachable */
+      });
+  }, []);
+
   function grow(el: HTMLTextAreaElement | null) {
     if (!el) return;
     el.style.height = "auto";
@@ -190,17 +278,23 @@ export default function App() {
       setTurns((all) => [...all.slice(0, -1), { ...all[all.length - 1], ...fields }]);
 
     try {
-      await ask(question, {
-        onToken: (token) => {
-          answer += token;
-          patch({ text: answer });
+      await ask(
+        question,
+        {
+          onToken: (token) => {
+            answer += token;
+            patch({ text: answer });
+          },
+          onSources: (found) => {
+            sources = found;
+            patch({ sources: found });
+            if (found[0]?.saved) setAsAt(found[0].saved);
+          },
         },
-        onSources: (found) => {
-          sources = found;
-          patch({ sources: found });
-          if (found[0]?.saved) setAsAt(found[0].saved);
-        },
-      }).done;
+        // Only send a provider when an admin has actually chosen a non-default
+        // one; the server rejects the field from anyone else.
+        providerState?.admin && provider && provider !== providerState.default ? provider : undefined,
+      ).done;
 
       const finished: Turn[] = [
         ...prior,
@@ -304,6 +398,36 @@ export default function App() {
         )}
 
         <div className="rail-foot">
+          {providerState?.admin ? (
+            <div className="admin-box">
+              <p className="label">Model provider</p>
+              <select value={provider ?? ""} onChange={(e) => setProvider(e.target.value)} disabled={busy}>
+                {providerState.providers.map((p) => (
+                  <option key={p.name} value={p.name}>
+                    {p.label}
+                    {p.name === providerState.default ? " (default)" : ""}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="linky"
+                onClick={() => {
+                  setToken(null);
+                  setProvider(providerState.default);
+                  setProviderState({ ...providerState, admin: false, providers: [] });
+                }}
+              >
+                Sign out
+              </button>
+            </div>
+          ) : (
+            providerState?.adminAvailable && (
+              <button className="linky" onClick={() => setShowLogin(true)}>
+                Admin sign-in
+              </button>
+            )
+          )}
+
           {chats.length > 0 && (
             <button
               className="linky"
@@ -374,7 +498,8 @@ export default function App() {
                         // Only count sources the answer actually cited. A refusal
                         // cites nothing, and listing five unrelated sources under
                         // "I couldn't find that" reads as a bug.
-                        const cited = (turn.sources ?? []).filter((s) => turn.text.includes(`[${s.n}]`));
+                        const shown = normaliseCitations(turn.text);
+                        const cited = (turn.sources ?? []).filter((s) => shown.includes(`[${s.n}]`));
                         return (
                           <>
                             <p className="label">
@@ -496,6 +621,17 @@ export default function App() {
       </div>
 
       </div>
+
+      {showLogin && (
+        <LoginDialog
+          onClose={() => setShowLogin(false)}
+          onDone={(state) => {
+            setProviderState(state);
+            setProvider(state.default);
+            setShowLogin(false);
+          }}
+        />
+      )}
 
       {openSource && (
         <div className="overlay" onClick={() => setOpenSource(null)}>

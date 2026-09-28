@@ -397,3 +397,68 @@ paying $7/month for Always On would fix it properly if it mattered.
 
 **Verified in production:** health 200; a request with a forged Origin rejected 403; a real
 question streamed 140 tokens; citations open the source passage and link to fairwork.gov.au.
+
+---
+
+## Step 9 — Swappable providers, admin login, and the free stack
+
+**What I built:** a provider abstraction (`scripts/providers.mjs`) with two bundles, an
+admin-only login that unlocks switching between them, and a second search index built with
+Gemini embeddings. Visitors always get the default; only a signed-in admin can pick.
+
+**Q: Why are chat and embeddings bundled instead of separately configurable?**
+Because they aren't independent. An index stores vectors of one fixed width produced by one
+model, and vectors from different models are not comparable — so switching the embedding model
+means switching the index too. Azure's `text-embedding-3-small` is 1536-dim; Gemini's
+`gemini-embedding-001` I truncate to 768 (Matryoshka), a quarter of the storage for negligible
+loss at 201 chunks. Each bundle owns its index: `workrights` and `workrights-free`.
+
+**Q: What did the free stack score against the paid one?**
+Identically. 95% Hit@1, 100% Hit@8, MRR 0.975 on the same 20 questions — failing on the same
+single question. I'd expected a drop. The explanation is that both stacks share Azure's semantic
+reranker, a cross-encoder that re-scores the fused candidates by reading question and passage
+together; it does most of the ranking work, so the embedding model's quality matters far less
+than I assumed. That's a measured finding, not a guess, and it changed my mental model.
+
+**Q: And answer quality?**
+On the two-part question (notice AND redundancy pay after 4 years), the free stack was better:
+Azure invented a misleading example ("an employee with 3 years was entitled to 3 weeks"); Groq's
+gpt-oss-120b said the notice table wasn't in its excerpts and pointed to the calculator. Refusing
+to fill a gap is exactly the grounding discipline you want. It was also faster: 1.8s vs 2.8s.
+
+**Q: Anything surprising about the free models?**
+Three things, all found by testing rather than reading:
+1. gpt-oss-120b is a *reasoning* model. Its hidden reasoning tokens count against `max_tokens`,
+   so the 700-token budget that suited Azure was spent entirely on thinking and returned an
+   empty string. Fix: `reasoning_effort: "low"` and a 1400-token ceiling.
+2. It writes citations as 【1】 (full-width brackets) no matter what the prompt says, so my
+   parser saw no citations and the UI said "no matching source". I normalise to [1] in the
+   renderer and in the server's final text, and tightened the prompt.
+3. Gemini's free tier rate-limits hard and *tells you how long to wait* in an RPC RetryInfo
+   detail. My HTTP helper now honours Retry-After / RetryInfo instead of a blind backoff; it
+   absorbed three throttles during indexing without me touching anything.
+
+**Q: How does the admin login work, and why not give visitors accounts?**
+A login wall on a public demo costs you almost every visitor, so there's none — the only thing
+behind auth is the provider switch. Password hashing is scrypt from node:crypto: memory-hard, so
+it resists GPU cracking in a way a plain SHA-256 digest doesn't, with no native bcrypt dependency.
+The hash is generated on my own machine by `npm run admin:hash`; the password is never stored,
+never logged, and never travelled through chat. Login verifies the password even when the
+username is wrong so both failures take the same time, returns one message for both so neither
+half is confirmed, and is rate-limited per IP. Sessions are signed JWTs, 8-hour expiry; a stale
+token is dropped client-side the first time the server reports admin:false.
+
+**Q: What does the visitor experience change to?**
+Nothing visible. Visitors get the default bundle and can't name a provider — the server rejects
+the field from anyone without a valid admin token (403), so nobody can steer a public demo onto
+the paid models. `DEFAULT_PROVIDER` is an environment setting, so the cutover to free is a config
+change with no deploy.
+
+**A mistake worth owning:** I pasted two API keys into a chat while setting this up. They were
+free-tier keys, so the exposure was quota rather than money, but the right response is the same:
+rotate immediately. I also built `npm run set-secret` so entering a key never has to go through a
+channel I don't control again.
+
+**Landmine I defused:** importing `ingest.mjs` used to *run* it — and it deletes the live index
+before rebuilding. I tripped it during the refactor; the index survived only because the command
+lacked credentials. It's now guarded behind a direct-invocation check.
