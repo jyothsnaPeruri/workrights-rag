@@ -462,3 +462,53 @@ channel I don't control again.
 **Landmine I defused:** importing `ingest.mjs` used to *run* it — and it deletes the live index
 before rebuilding. I tripped it during the refactor; the index survived only because the command
 lacked credentials. It's now guarded behind a direct-invocation check.
+
+---
+
+## Step 11 — Visitor document upload ("compare my contract to the rules")
+
+**What I built:** visitors can upload a contract or policy (PDF/TXT/MD, ≤5 MB) and ask questions
+answered from their document *and* the Fair Work pages together, each claim cited to its source.
+Documents expire after 7 days and can be deleted at any time. `server/uploads.mjs`, plus the
+upload UI and a privacy notice shown before the first upload.
+
+**Q: How do you keep one visitor from seeing another's document?**
+A `scope` field on every chunk: `public` for the Fair Work pages, or the visitor's session id for
+their uploads. Retrieval applies `scope eq 'public' or scope eq '<their id>'` as a filter
+*before* ranking, server-side. Isolation never depends on the UI behaving — a forged request
+still only sees its own scope. The session id is a random UUID the browser mints once; nothing
+identifying is ever collected and no account exists.
+
+**Q: Why share one index instead of an index per visitor?**
+Azure AI Search Free allows three indexes and all three were in use — but that's the wrong
+design at any tier. Index-per-tenant doesn't scale; a filterable tenant field is the standard
+multi-tenant pattern, and it's what I'd do with unlimited indexes too.
+
+**Q: Why is this the free bundle only?**
+Uploads must live in the index built with the same embedding model as the query, and that's the
+Gemini-embedded index. So a session with documents is answered by the free provider even if the
+admin has selected Azure — the server overrides it, and says so.
+
+**Q: What did you do about privacy? People will upload contracts and payslips.**
+Said it up front, not in a footer: a notice before the first upload states that the text goes to
+Google and Groq, that it's kept 7 days, that it's tied to this browser only, and that this is a
+public demo — with an explicit "don't upload anything you wouldn't email to a stranger". Delete
+button per document, delete-all on the session, hourly sweep of expired chunks, and nothing about
+document *content* is logged — only counts. The 7-day retention was a product call (convenience
+over strictness); 24 hours would be the more conservative default for a real service.
+
+**Q: What limits the cost and abuse?**
+Embedding and answering are $0 on the free bundle. The scarce resource is the 50 MB index, so:
+5 MB/file, 3 documents per visitor, ~60 pages per document, 10 uploads/hour per IP, and a global
+cap on uploaded chunks with oldest-first eviction. Uploads also count toward the daily question
+cap because the following questions do.
+
+**Q: Anything you had to work around?**
+Azure AI Search has no delete-by-filter — you list matching ids then delete in batches. And
+Gemini's free tier rate-limits during a large upload; the retry-with-RetryInfo logic from Step 9
+absorbs it, but the UI needs a visible "uploading" state or a 40-second upload looks hung.
+
+**The demo line:** upload a contract whose notice clause says "2 weeks regardless of service",
+ask "how much notice does my contract give me after 4 years?", and the answer sets the contract's
+2 weeks beside the NES minimum of 3 weeks, cited to both — without telling the user whether the
+clause is lawful, which it correctly leaves to the Infoline.

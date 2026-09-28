@@ -1,4 +1,5 @@
 import { authHeaders } from "./admin";
+import { sessionHeaders } from "./documents";
 
 // Empty in development: the Vite dev server proxies /api to localhost:8787, so
 // the browser sees one origin. In production this is baked in at build time and
@@ -27,6 +28,7 @@ export interface Source {
   url: string;
   saved: string;
   excerpt: string;
+  uploaded?: boolean;
 }
 
 interface AskHandlers {
@@ -49,7 +51,7 @@ export function ask(
   const done = (async () => {
     const response = await fetch(`${API}/api/ask`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
+      headers: { "Content-Type": "application/json", ...authHeaders(), ...sessionHeaders() },
       body: JSON.stringify({ question, provider }),
       signal: controller.signal,
     });

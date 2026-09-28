@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
 import { ask, warmUp, type Source } from "./api";
 import { history, newId, titleFrom, type Conversation, type Turn } from "./storage";
 import { adminLogin, loadProviderState, setToken, type ProviderState } from "./admin";
+import { deleteDocument, listDocuments, uploadDocument, type UploadedDocument } from "./documents";
 
 const STARTERS = [
   "How much annual leave do I get, and does it carry over?",
@@ -186,6 +187,43 @@ function LoginDialog({ onDone, onClose }: { onDone: (state: ProviderState) => vo
   );
 }
 
+/**
+ * Shown before a visitor's first upload. People upload employment contracts and
+ * payslips, so what happens to the file has to be said up front, not in a footer.
+ */
+function UploadNotice({ onAccept, onClose }: { onAccept: () => void; onClose: () => void }) {
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="panel notice-panel" role="dialog" aria-modal="true" aria-label="Before you upload" onClick={(e) => e.stopPropagation()}>
+        <div className="panel-head">
+          <strong>Before you upload</strong>
+          <button onClick={onClose} aria-label="Close">
+            ✕
+          </button>
+        </div>
+        <ul className="notice-list">
+          <li>Your file's text is sent to Google (to index it) and Groq (to answer) — both third parties.</li>
+          <li>It's stored for <strong>7 days</strong>, then deleted. You can delete it sooner from the side panel.</li>
+          <li>It's tied to this browser only. Nobody else can search it — but this is a public demo, not a secure service.</li>
+          <li>
+            <strong>Don't upload anything you wouldn't email to a stranger.</strong> Remove names, addresses and
+            salary figures if you can.
+          </li>
+          <li>Text-based PDF, TXT or Markdown, under 5 MB. Scanned images won't work.</li>
+        </ul>
+        <div className="notice-actions">
+          <button className="ghost-btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="primary" onClick={onAccept}>
+            I understand — choose a file
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------- app -- */
 
 export default function App() {
@@ -202,6 +240,10 @@ export default function App() {
   const [providerState, setProviderState] = useState<ProviderState | null>(null);
   const [provider, setProvider] = useState<string | null>(null);
   const [showLogin, setShowLogin] = useState(false);
+  const [documents, setDocuments] = useState<UploadedDocument[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [showUploadNotice, setShowUploadNotice] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const bottom = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -250,6 +292,50 @@ export default function App() {
         /* the health check already surfaces a server that isn't reachable */
       });
   }, []);
+
+  useEffect(() => {
+    listDocuments().then(setDocuments).catch(() => {
+      /* server down is already surfaced by the health check */
+    });
+  }, []);
+
+  function chooseFile() {
+    // The notice is shown once per browser; after that, straight to the picker.
+    let seen = false;
+    try {
+      seen = localStorage.getItem("workrights.uploadNoticeSeen") === "1";
+    } catch {
+      /* treat as not seen */
+    }
+    if (seen) fileInput.current?.click();
+    else setShowUploadNotice(true);
+  }
+
+  async function onFileChosen(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setError(null);
+    setUploading(true);
+    try {
+      const doc = await uploadDocument(file);
+      setDocuments((all) => [...all, doc]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function removeDocument(id: string) {
+    setError(null);
+    try {
+      await deleteDocument(id);
+      setDocuments((all) => all.filter((d) => d.id !== id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't delete that document.");
+    }
+  }
 
   function grow(el: HTMLTextAreaElement | null) {
     if (!el) return;
@@ -397,6 +483,24 @@ export default function App() {
           </ul>
         )}
 
+        <p className="label">Your documents</p>
+        {documents.length === 0 ? (
+          <p className="rail-empty">Upload a contract or policy with the 📎 button and ask about it alongside the Fair Work pages.</p>
+        ) : (
+          <ul className="docs">
+            {documents.map((doc) => (
+              <li key={doc.id}>
+                <span className="doc-name" title={doc.name}>
+                  {doc.name}
+                </span>
+                <button className="chat-del" onClick={() => removeDocument(doc.id)} disabled={busy || uploading} aria-label={`Delete ${doc.name}`} title="Delete">
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
         <div className="rail-foot">
           {providerState?.admin ? (
             <button
@@ -512,6 +616,7 @@ export default function App() {
                                       <button onClick={() => setOpenSource(s)}>
                                         <span className="n">{s.n}</span>
                                         <span className="ref-text">
+                                          {s.uploaded ? "Your document: " : ""}
                                           {s.title}
                                           {s.heading ? ` — ${s.heading}` : ""}
                                         </span>
@@ -579,6 +684,18 @@ export default function App() {
               aria-label="Your question"
             />
             <div className="composer-bar">
+              <div className="composer-tools">
+                <button
+                  type="button"
+                  className="attach"
+                  onClick={chooseFile}
+                  disabled={busy || uploading || documents.length >= 3}
+                  aria-label="Upload a document"
+                  title={documents.length >= 3 ? "Maximum 3 documents — delete one first" : "Upload a PDF, TXT or MD to ask about"}
+                >
+                  {uploading ? <span className="pending" aria-label="Uploading"><i /><i /><i /></span> : "📎"}
+                </button>
+                <input ref={fileInput} type="file" accept=".pdf,.txt,.md" onChange={onFileChosen} hidden />
               {/* Model picker sits with the input, like a chat client's model
                   menu. Visitors never see it: the server only accepts a
                   provider from a signed-in admin. */}
@@ -594,9 +711,8 @@ export default function App() {
                     ))}
                   </select>
                 </label>
-              ) : (
-                <span />
-              )}
+              ) : null}
+              </div>
               <button className="send" type="submit" disabled={busy || !draft.trim()} aria-label="Send">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M12 19V5M5 12l7-7 7 7" />
@@ -631,6 +747,21 @@ export default function App() {
 
       </div>
 
+      {showUploadNotice && (
+        <UploadNotice
+          onClose={() => setShowUploadNotice(false)}
+          onAccept={() => {
+            try {
+              localStorage.setItem("workrights.uploadNoticeSeen", "1");
+            } catch {
+              /* shown again next time, which is fine */
+            }
+            setShowUploadNotice(false);
+            fileInput.current?.click();
+          }}
+        />
+      )}
+
       {showLogin && (
         <LoginDialog
           onClose={() => setShowLogin(false)}
@@ -647,6 +778,7 @@ export default function App() {
           <div className="panel" role="dialog" aria-modal="true" aria-label="Source passage" onClick={(e) => e.stopPropagation()}>
             <div className="panel-head">
               <strong>
+                {openSource.uploaded ? "Your document: " : ""}
                 {openSource.title}
                 {openSource.heading ? ` — ${openSource.heading}` : ""}
               </strong>
@@ -655,9 +787,13 @@ export default function App() {
               </button>
             </div>
             <Excerpt text={openSource.excerpt} />
-            <a href={openSource.url} target="_blank" rel="noreferrer">
-              Read the full page on fairwork.gov.au →
-            </a>
+            {openSource.uploaded ? (
+              <p className="login-note">From a document you uploaded. It stays in this browser's session only.</p>
+            ) : (
+              <a href={openSource.url} target="_blank" rel="noreferrer">
+                Read the full page on fairwork.gov.au →
+              </a>
+            )}
           </div>
         </div>
       )}

@@ -34,6 +34,14 @@ function indexDefinition(name, dimensions) {
       { name: "url", type: "Edm.String", filterable: true },
       { name: "sourceFile", type: "Edm.String", filterable: true },
       { name: "saved", type: "Edm.String", filterable: true },
+      // Multi-tenant fields. The Fair Work pages are scope "public"; a visitor's
+      // uploaded document is scoped to their session id, and every query filters
+      // on scope server-side so one visitor can never retrieve another's file.
+      // Azure AI Search Free allows three indexes and all three are in use, so
+      // uploads share this index rather than getting their own.
+      { name: "scope", type: "Edm.String", filterable: true },
+      { name: "docId", type: "Edm.String", filterable: true },
+      { name: "expiresAt", type: "Edm.DateTimeOffset", filterable: true, sortable: true },
       {
         name: "vector",
         type: "Collection(Edm.Single)",
@@ -88,6 +96,9 @@ async function main() {
         url: meta.url,
         sourceFile: file,
         saved: meta.saved,
+        scope: "public",
+        docId: "public",
+        expiresAt: null,
       });
     });
     console.log(`  ${file.padEnd(46)} ${String(chunks.length).padStart(3)} chunks`);

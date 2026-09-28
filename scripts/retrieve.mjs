@@ -23,6 +23,15 @@ const MAX_PER_DOCUMENT = 3;
 // drops the crowded ones.
 const CANDIDATE_MULTIPLIER = 3;
 
+// When a visitor has uploaded a document, this many of the final slots are
+// reserved for their best-matching chunks. The semantic reranker optimises for
+// relevance to the question and will happily rank the official notice-period
+// table above the visitor's own contract clause — correct by its lights, but
+// someone who uploads a contract and asks about "my contract" must have it
+// consulted. Measured: the contract chunk ranked 8th of 24 under vector search
+// and was reranked out of the top 8 entirely.
+const RESERVED_FOR_UPLOADS = 2;
+
 /**
  * Keeps the highest-scoring chunks while allowing at most MAX_PER_DOCUMENT from
  * any one source file. Anything dropped by the cap is added back at the end if
@@ -55,7 +64,14 @@ function diversify(hits, top) {
  * redundancy pay embedded better than the table *of* redundancy pay. Adding the
  * keyword arm moved the table to 1st.
  */
-export async function retrieve(question, { top = TOP_K, mode = process.env.RETRIEVAL_MODE ?? "semantic", provider } = {}) {
+/** OData filter that lets a visitor see the public corpus plus only their own uploads. */
+export const scopeFilter = (scope) =>
+  scope ? `scope eq 'public' or scope eq '${String(scope).replace(/'/g, "")}'` : "scope eq 'public'";
+
+export async function retrieve(
+  question,
+  { top = TOP_K, mode = process.env.RETRIEVAL_MODE ?? "semantic", provider, scope } = {},
+) {
   const models = getProvider(provider);
   // Gemini embeds questions and passages into deliberately different spaces,
   // which improves retrieval; Azure uses one space for both.
@@ -66,8 +82,10 @@ export async function retrieve(question, { top = TOP_K, mode = process.env.RETRI
 
   const query = {
     vectorQueries: [{ kind: "vector", vector, fields: "vector", k: candidates }],
-    select: "content,title,heading,url,sourceFile,saved",
+    select: "content,title,heading,url,sourceFile,saved,scope,docId",
     top: candidates,
+    // Isolation happens here, before ranking, not in the UI.
+    filter: scopeFilter(scope),
   };
   if (mode !== "vector") {
     query.search = question; // keyword arm
@@ -97,7 +115,7 @@ export async function retrieve(question, { top = TOP_K, mode = process.env.RETRI
     result = await search.query(index, query);
   }
 
-  const hits = result.value.map((doc) => ({
+  const toHit = (doc) => ({
     score: doc["@search.score"],
     content: doc.content,
     title: doc.title,
@@ -105,9 +123,28 @@ export async function retrieve(question, { top = TOP_K, mode = process.env.RETRI
     url: doc.url,
     sourceFile: doc.sourceFile,
     saved: doc.saved,
-  }));
+    scope: doc.scope,
+    docId: doc.docId,
+  });
+  const hits = result.value.map(toHit);
 
-  return diversify(hits, top);
+  if (!scope) return diversify(hits, top);
+
+  // Reserve seats for the visitor's own document(s). Same query vector, scoped
+  // to their uploads only, pure vector ranking — cheap, and unaffected by how
+  // the reranker scores them against the public corpus.
+  const own = await search.query(index, {
+    vectorQueries: [{ kind: "vector", vector, fields: "vector", k: RESERVED_FOR_UPLOADS }],
+    select: "content,title,heading,url,sourceFile,saved,scope,docId",
+    top: RESERVED_FOR_UPLOADS,
+    filter: `scope eq '${String(scope).replace(/'/g, "")}'`,
+  }).then((r) => r.value.map(toHit));
+  if (own.length === 0) return diversify(hits, top);
+
+  const ownIds = new Set(own.map((h) => h.content));
+  const rest = diversify(hits.filter((h) => !ownIds.has(h.content)), top - own.length);
+  // Own-document chunks first, so they take citations [1] and [2].
+  return [...own, ...rest];
 }
 
 // --- CLI: npm run search "your question here" -------------------------------

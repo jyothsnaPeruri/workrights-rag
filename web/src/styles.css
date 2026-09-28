@@ -719,6 +719,104 @@ button {
   outline-offset: 2px;
 }
 
+/* -------------------------------------------------------------- uploads -- */
+
+.docs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.docs li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 10px;
+  border-left: 2px solid var(--accent);
+}
+
+.doc-name {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 0;
+  color: rgb(232 238 243 / 0.88);
+  font-size: 0.82rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.attach {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.attach:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.attach:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.attach .pending {
+  height: auto;
+  gap: 3px;
+}
+
+.notice-panel {
+  max-width: 30rem;
+}
+
+.notice-list {
+  margin: 0 0 16px;
+  padding-left: 1.2em;
+  font-size: 0.9rem;
+}
+
+.notice-list li {
+  margin-bottom: 0.5em;
+}
+
+.notice-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.notice-actions .primary {
+  padding: 9px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ghost-btn {
+  padding: 9px 14px;
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
 /* ---------------------------------------------------------- admin panel -- */
 
 .admin-box {

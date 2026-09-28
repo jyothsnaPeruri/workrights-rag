@@ -10,6 +10,18 @@ import { answerQuestion } from "../scripts/answer.mjs";
 import { availableProviders, defaultProvider, PROVIDERS } from "../scripts/providers.mjs";
 import { adminConfigured, isAdmin, login } from "./auth.mjs";
 import { checkVisitor, consumeGlobalQuota, ensureUsageIndex, LIMITS } from "./limits.mjs";
+import multer from "multer";
+import {
+  deleteDocument,
+  deleteSession,
+  ingestUpload,
+  listDocuments,
+  sessionHasDocuments,
+  sweepExpired,
+  UPLOAD_LIMITS,
+  UploadError,
+  validSession,
+} from "./uploads.mjs";
 
 const PORT = Number(process.env.PORT ?? 8787);
 
@@ -30,7 +42,7 @@ app.use(cors({ origin: allowedOrigins ?? true }));
 // entirely. Rejecting a disallowed Origin up front means an embedded widget on
 // someone else's site costs nothing. A scripted client can omit or forge the
 // header, which is why the global daily cap, not this, is the real guard.
-app.use("/api/ask", (req, res, next) => {
+app.use(["/api/ask", "/api/documents"], (req, res, next) => {
   const origin = req.get("origin");
   if (allowedOrigins && origin && !allowedOrigins.includes(origin)) {
     return res.status(403).json({ error: "This API only serves the Work Rights Q&A demo site." });
@@ -76,6 +88,88 @@ app.post("/api/admin/login", async (req, res) => {
   res.json({ token, providers: availableProviders(), default: defaultProvider() });
 });
 
+/* ---------------------------------------------------------- uploads -- */
+
+// The browser mints a random UUID once and sends it on every request. It is
+// the only thing that ties a visitor to their documents: no account, nothing
+// identifying, and it never leaves that browser unless they clear it.
+function requireSession(req, res, next) {
+  const session = validSession(req.get("x-session-id"));
+  if (!session) return res.status(400).json({ error: "Missing or invalid session id." });
+  res.locals.session = session;
+  next();
+}
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: UPLOAD_LIMITS.fileBytes, files: 1 },
+});
+
+// Uploads cost embedding quota and index space, so they get their own, tighter
+// per-IP limit on top of everything else.
+const uploadAttempts = new Map();
+function checkUploadRate(ip) {
+  const now = Date.now();
+  const recent = (uploadAttempts.get(ip) ?? []).filter((t) => now - t < 60 * 60 * 1000);
+  if (recent.length >= 10) return false;
+  recent.push(now);
+  uploadAttempts.set(ip, recent);
+  return true;
+}
+
+app.get("/api/documents", requireSession, async (req, res) => {
+  try {
+    res.json(await listDocuments(res.locals.session));
+  } catch (error) {
+    console.error("list documents failed:", error.message);
+    res.status(500).json({ error: "Couldn't load your documents. Please try again." });
+  }
+});
+
+app.post("/api/documents", requireSession, (req, res) => {
+  if (!checkUploadRate(req.ip ?? "unknown")) {
+    return res.status(429).json({ error: "Upload limit reached. Please try again in an hour." });
+  }
+  upload.single("file")(req, res, async (multerError) => {
+    if (multerError) {
+      const tooBig = multerError.code === "LIMIT_FILE_SIZE";
+      return res.status(tooBig ? 413 : 400).json({ error: tooBig ? "Files must be under 5 MB." : multerError.message });
+    }
+    if (!req.file) return res.status(400).json({ error: "No file received." });
+    try {
+      // multer decodes names as latin1; recover UTF-8 so "résumé.pdf" survives.
+      const name = Buffer.from(req.file.originalname, "latin1").toString("utf8");
+      res.status(201).json(await ingestUpload(res.locals.session, name, req.file.buffer));
+    } catch (error) {
+      if (error instanceof UploadError) return res.status(error.status).json({ error: error.message });
+      console.error("upload failed:", error.message);
+      res.status(500).json({ error: "Couldn't process that file. Please try another." });
+    }
+  });
+});
+
+app.delete("/api/documents/:id", requireSession, async (req, res) => {
+  try {
+    await deleteDocument(res.locals.session, req.params.id);
+    res.status(204).end();
+  } catch (error) {
+    console.error("delete document failed:", error.message);
+    res.status(500).json({ error: "Couldn't delete that document." });
+  }
+});
+
+app.delete("/api/documents", requireSession, async (req, res) => {
+  try {
+    await deleteSession(res.locals.session);
+    res.status(204).end();
+  } catch (error) {
+    console.error("delete session failed:", error.message);
+    res.status(500).json({ error: "Couldn't delete your documents." });
+  }
+});
+
+/* -------------------------------------------------------------- ask -- */
+
 app.post("/api/ask", async (req, res) => {
   const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
   if (!question) {
@@ -102,6 +196,15 @@ app.post("/api/ask", async (req, res) => {
       return res.status(503).json({ error: `${requested} is not configured on this server.` });
     }
     provider = requested;
+  }
+
+  // A session id is optional for asking. When present, retrieval also searches
+  // that visitor's uploads — which live only in the free bundle's index, so a
+  // session with documents is answered by the free provider regardless of the
+  // admin's choice.
+  const scope = validSession(req.get("x-session-id"));
+  if (scope && provider !== "free" && PROVIDERS.free.configured()) {
+    if (await sessionHasDocuments(scope).catch(() => false)) provider = "free";
   }
 
   const visitor = checkVisitor(req.ip ?? "unknown");
@@ -151,6 +254,7 @@ app.post("/api/ask", async (req, res) => {
   try {
     const { sources } = await answerQuestion(question, {
       provider,
+      scope,
       onToken: (token) => {
         if (!closed) send("token", token);
       },
@@ -168,6 +272,8 @@ app.post("/api/ask", async (req, res) => {
           saved: source.saved,
           // Strip the "Title > Heading" prefix added at ingest time.
           excerpt: source.content.split("\n\n").slice(1).join("\n\n"),
+          // Lets the UI label the citation "Your document" and skip the link.
+          uploaded: Boolean(source.scope && source.scope !== "public"),
         })),
       );
       send("done", { provider });
@@ -182,6 +288,12 @@ app.post("/api/ask", async (req, res) => {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   await ensureUsageIndex();
+  const sweep = () =>
+    sweepExpired()
+      .then((n) => n && console.log(`Swept ${n} expired upload chunk(s)`))
+      .catch((error) => console.error("sweep failed:", error.message));
+  await sweep();
+  setInterval(sweep, 60 * 60 * 1000).unref();
   app.listen(PORT, () =>
     console.log(
       `API on http://localhost:${PORT} — ${LIMITS.perVisitor.max}/${LIMITS.perVisitor.windowMs / 60000}min per visitor, ${LIMITS.globalPerDay}/day total`,

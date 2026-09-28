@@ -56,6 +56,32 @@ it cleans up that wider pool. Either alone is worse than both.
 20 questions is a small sample: 95% is 19/20, and a one-question difference is noise. The
 80% → 95% gap is large enough to act on.
 
+## Upload your own document
+
+Visitors can upload a contract or policy (text-based PDF, TXT or Markdown, ≤5 MB) and ask
+questions answered from **their document and the Fair Work pages together**, each claim cited to
+its source:
+
+> *Your contract provides 2 weeks' notice, while the NES minimum after 4 years of service is
+> 3 weeks* — [1] your document, clause 7 · [4] Fair Work, Minimum notice period
+
+It explains what the document says and what the rules say; it does not judge whether the
+document is lawful, which it leaves to the Fair Work Infoline.
+
+- **Isolation:** every chunk carries a `scope` — `public` for the Fair Work pages, or the
+  visitor's anonymous session id. Retrieval filters on scope *before* ranking, server-side, so one
+  visitor can never retrieve another's file. No account, nothing identifying collected.
+- **Reserved seats:** the semantic reranker will rank the official notice-period table above a
+  visitor's own contract clause — correct by its lights, wrong for someone asking about "my
+  contract". Two context slots are guaranteed to their own document.
+- **Privacy:** a notice before the first upload states that the text goes to Google and Groq,
+  that it's kept 7 days, and that this is a public demo. Delete per document or all at once;
+  expired chunks are swept hourly; document content is never logged.
+- **Limits:** 3 documents per visitor, ~60 pages each, 10 uploads/hour per IP, and a global cap
+  on uploaded chunks with oldest-first eviction — the 50 MB free-tier index is the scarce resource.
+- **Consistency:** Azure AI Search indexes asynchronously, so the upload endpoint waits until the
+  chunks are actually searchable before reporting success.
+
 ## Notable implementation details
 
 - **Chunks carry their heading path.** Every chunk is prefixed with `Document > Heading`, so a
