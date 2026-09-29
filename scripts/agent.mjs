@@ -141,6 +141,7 @@ export async function answerAgentic(question, { onToken, provider, scope, hasOwn
     if (onToken) onToken(answer);
     return { answer, sources, usage: final.usage, provider: models.name, mode: "agent", steps, calls };
   } catch (error) {
+    if (error.rateLimited && process.env.AGENT_NO_FALLBACK === "1") throw error;
     console.warn("agent failed, falling back to the direct pipeline:", error.message.slice(0, 120));
     // If the direct pipeline is rate-limited too, let that error propagate so
     // the server can say "busy" rather than "something went wrong".

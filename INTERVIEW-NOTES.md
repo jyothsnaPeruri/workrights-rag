@@ -540,3 +540,56 @@ Counters flush to the index every fifth event to save writes, and the stats endp
 the index. The live numbers are in memory on the same process, so the endpoint overlays them for
 today. A restart can still lose up to four unflushed counts — acceptable for a visit tally,
 not for the spending cap, which is why the cap counter flushes more eagerly.
+
+---
+
+## Step 13 — Agentic RAG, measured against the pipeline
+
+**What I built:** `scripts/agent.mjs`. The model gets two tools — `search_fair_work` and, when the
+visitor has uploads, `search_my_documents` — and a loop: it decides which searches to run, splits
+a multi-part question, retries with different words when results are thin, and stops when it has
+enough. Same index, reranker and citations; excerpt numbers are global across searches. The first
+round *must* call a tool (answering from memory is the one thing the system exists to prevent);
+hard cap of four rounds; any failure falls back to the direct pipeline. Visitors get the agent by
+default; an admin can pick per question. And `evaluate-answers.mjs`: an answer-level evaluation
+with an LLM judge, because retrieval scores can't tell you whether a multi-step answer is right.
+
+**Q: What did the numbers say?** (27 questions: 20 standard + 7 hard multi-part; judge = Azure
+gpt-4.1-mini so the Groq candidate isn't marking its own work)
+
+| | Direct pipeline | Agent |
+|---|---|---|
+| Standard (20) | 18/20 | 18/20 |
+| Hard, multi-part (7) | 6/7 | **7/7** |
+| All (27) | 24/27 (89%) | **25/27 (93%)** |
+| Median latency (unthrottled) | ~1.6 s | ~2.3 s |
+| Model calls per question | 1.0 | 2.1 |
+| Searches per question | 1 | 1.2 |
+
+The agent's one extra pass is exactly the question the pipeline had always got wrong: "4 years,
+redundant — how much notice *and* redundancy pay?" — two searches, both facts. On simple
+questions it ran one search and answered, so it cost one extra (cheap) planning call, not a
+storm of searches. Honest caveats: 27 questions is small, so a one-question difference is
+noise; the two remaining failures are shared (Q1 — the judge required "casuals get none", which
+neither mode volunteered) or a coin-flip (Q17, agent only). And the averages in the raw log are
+inflated by free-tier throttling, which is why I report medians.
+
+**Q: Why not just always use the agent, then?**
+Cost and predictability. 2.1× the model calls, ~40% more latency, and on Groq's free tier
+(8,000 tokens/minute) an agent question at 5–7k tokens is roughly one per minute — so it degrades
+gracefully: retry briefly, then fall back to the direct pipeline, then tell the visitor the
+service is busy. The direct pipeline stays as a first-class mode, one setting away.
+
+**Q: What surprised you?**
+That the plain pipeline was already at 89%. The agent's value is concentrated in the hard tail —
+multi-part questions — not spread across everything. If I'd only measured retrieval, I'd have
+seen "95% both ways" and concluded the agent added nothing; the answer-level judge is what made
+the difference visible. Also: the free tier's tokens-per-minute limit, not accuracy, turned out
+to be the real constraint on agentic RAG in production — and I only found that by running the
+evaluation and the app at the same time and watching everything 429.
+
+**Q: How would you extend it?**
+Clarifying questions (ask for years of service instead of guessing), a self-check pass that
+drops any sentence without a citation, and streaming the agent's steps to the screen. Each is a
+prompt-and-tool change on the same loop; each costs another model call, so each would go through
+the same evaluation before becoming a default.

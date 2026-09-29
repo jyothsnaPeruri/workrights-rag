@@ -39,6 +39,28 @@ every claim, and says "I don't know" when the answer isn't there.
 **Ingestion (offline, re-runnable):** fetch → clean → chunk → embed → index.
 **Query (per request):** embed question → hybrid search → semantic rerank → diversify → generate.
 
+## Agentic mode
+
+By default the model drives retrieval: it gets `search_fair_work` (and `search_my_documents` when
+you've uploaded something) and a loop — it decides which searches to run, splits a multi-part
+question, retries with different words when results are thin, and stops when it has enough. The
+first round must search; four rounds maximum; any failure falls back to the direct pipeline.
+
+Measured with an answer-level LLM judge over 20 standard + 7 hard multi-part questions:
+
+| | Direct pipeline | Agent |
+| --- | --- | --- |
+| Standard (20) | 18/20 | 18/20 |
+| Hard, multi-part (7) | 6/7 | **7/7** |
+| All (27) | 89% | **93%** |
+| Median latency | ~1.6 s | ~2.3 s |
+| Model calls / question | 1.0 | 2.1 |
+
+The agent's gain is concentrated in multi-part questions — the case a single search structurally
+loses. It costs twice the model calls, and on Groq's free tier (8,000 tokens/minute) that matters,
+so it degrades: brief retry → direct pipeline → "service busy". `ANSWER_MODE=direct` reverts.
+`npm run evaluate:answers` reproduces the table.
+
 ## Retrieval quality
 
 Measured against 20 hand-written questions in

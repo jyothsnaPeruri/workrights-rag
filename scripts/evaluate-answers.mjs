@@ -55,11 +55,32 @@ async function judge(question, expected, answer) {
   return /^\s*yes/i.test(text);
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// The free tier meters tokens per minute. A visitor-facing call gives up after
+// a few seconds (and degrades); a batch evaluation should simply wait it out,
+// otherwise the run dies a third of the way through and measures nothing.
+async function patiently(fn) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (!error.rateLimited || attempt >= 12) throw error;
+      const m = /try again in ([\d.]+)(ms|s)/i.exec(error.message);
+      const wait = m ? parseFloat(m[1]) * (m[2] === "s" ? 1000 : 1) + 1000 : 15_000;
+      process.stdout.write(`  (rate limited — waiting ${Math.ceil(wait / 1000)}s)\n`);
+      await sleep(wait);
+    }
+  }
+}
+
 async function run(mode, item) {
   const t0 = Date.now();
   const opts = { provider: CANDIDATE_PROVIDER };
-  const result = mode === "agent" ? await answerAgentic(item.question, opts) : await answerQuestion(item.question, opts);
-  const seconds = (Date.now() - t0) / 1000;
+  const result = await patiently(() =>
+    mode === "agent" ? answerAgentic(item.question, opts) : answerQuestion(item.question, opts),
+  );
+  const seconds = (Date.now() - t0) / 1000 - (result.waited ?? 0);
   const correct = await judge(item.question, item.expect, result.answer);
   return { correct, seconds, calls: result.calls ?? 1, searches: result.steps?.length ?? 1, mode: result.mode ?? mode };
 }
@@ -74,6 +95,7 @@ for (const mode of modes) {
   for (const item of questions) {
     const r = await run(mode, item);
     rows.push({ ...item, ...r });
+    await sleep(mode === "agent" ? 12_000 : 5_000); // stay under the per-minute token budget
     const fallback = r.mode === "direct-fallback" ? " (fell back)" : "";
     console.log(`${mode.padEnd(6)} ${r.correct ? "PASS" : "FAIL"}  ${item.id.padEnd(3)} ${r.seconds.toFixed(1)}s ${r.calls} call(s) ${r.searches} search(es)${fallback}  ${item.question.slice(0, 70)}`);
   }
