@@ -1,0 +1,31 @@
+# Keeps the free-tier App Service awake.
+#
+# App Service F1 sleeps after ~20 minutes idle and takes 20-30 seconds to wake,
+# which is long enough for a visitor arriving from a LinkedIn link to give up.
+# A health-check request every 5 minutes prevents the sleep. /api/health does
+# no work — no model call, no search — so it costs nothing beyond a few
+# milliseconds of the app's 60 CPU-minutes/day allowance.
+#
+# GitHub Actions minutes are free and unmetered for public repositories. The
+# schedule is best-effort (runs can be a few minutes late) and GitHub disables
+# scheduled workflows after 60 days without a commit, so a push every couple
+# of months keeps it going.
+
+name: Keep API awake
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping health endpoint
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 \
+            https://workrights-api-apaudma8dxf4d8az.australiaeast-01.azurewebsites.net/api/health)
+          echo "health returned $code"
+          test "$code" = "200"
