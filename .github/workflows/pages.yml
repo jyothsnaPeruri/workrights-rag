@@ -1,0 +1,51 @@
+# Publishes the frontend to GitHub Pages at https://jyothsnaperuri.github.io/workrights-rag/
+#
+# Free, and a cleaner address than the random Static Web Apps hostname. Only the
+# static frontend moves; the API stays on Azure App Service, which must list this
+# origin in CLIENT_ORIGIN or it will reject the requests (403).
+
+name: Deploy frontend to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", "package.json", "package-lock.json", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build:web
+        env:
+          VITE_API_URL: https://workrights-api-apaudma8dxf4d8az.australiaeast-01.azurewebsites.net
+          VITE_BASE: /workrights-rag/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
