@@ -70,7 +70,7 @@ export const scopeFilter = (scope) =>
 
 export async function retrieve(
   question,
-  { top = TOP_K, mode = process.env.RETRIEVAL_MODE ?? "semantic", provider, scope } = {},
+  { top = TOP_K, mode = process.env.RETRIEVAL_MODE ?? "semantic", provider, scope, onlyOwn = false } = {},
 ) {
   const models = getProvider(provider);
   // Gemini embeds questions and passages into deliberately different spaces,
@@ -84,8 +84,9 @@ export async function retrieve(
     vectorQueries: [{ kind: "vector", vector, fields: "vector", k: candidates }],
     select: "content,title,heading,url,sourceFile,saved,scope,docId",
     top: candidates,
-    // Isolation happens here, before ranking, not in the UI.
-    filter: scopeFilter(scope),
+    // Isolation happens here, before ranking, not in the UI. `onlyOwn` is the
+    // agent's "search my documents" tool: the visitor's uploads and nothing else.
+    filter: onlyOwn && scope ? `scope eq '${String(scope).replace(/'/g, "")}'` : scopeFilter(scope),
   };
   if (mode !== "vector") {
     query.search = question; // keyword arm
@@ -128,7 +129,7 @@ export async function retrieve(
   });
   const hits = result.value.map(toHit);
 
-  if (!scope) return diversify(hits, top);
+  if (!scope || onlyOwn) return diversify(hits, top);
 
   // Reserve seats for the visitor's own document(s). Same query vector, scoped
   // to their uploads only, pure vector ranking — cheap, and unaffected by how

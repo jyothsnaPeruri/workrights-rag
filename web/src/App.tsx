@@ -239,6 +239,7 @@ export default function App() {
   const [awake, setAwake] = useState(true);
   const [providerState, setProviderState] = useState<ProviderState | null>(null);
   const [provider, setProvider] = useState<string | null>(null);
+  const [mode, setMode] = useState<string | null>(null);
   const [showLogin, setShowLogin] = useState(false);
   const [stats, setStats] = useState<UsageStats | null>(null);
   const [documents, setDocuments] = useState<UploadedDocument[]>([]);
@@ -288,6 +289,7 @@ export default function App() {
       .then((state) => {
         setProviderState(state);
         setProvider((current) => current ?? state.default);
+        setMode((current) => current ?? state.defaultMode ?? null);
       })
       .catch(() => {
         /* the health check already surfaces a server that isn't reachable */
@@ -390,6 +392,7 @@ export default function App() {
         // Only send a provider when an admin has actually chosen a non-default
         // one; the server rejects the field from anyone else.
         providerState?.admin && provider && provider !== providerState.default ? provider : undefined,
+        providerState?.admin && mode && mode !== providerState.defaultMode ? mode : undefined,
       ).done;
 
       const finished: Turn[] = [
@@ -764,6 +767,19 @@ export default function App() {
                   </select>
                 </label>
               ) : null}
+              {providerState?.admin && providerState.modes?.length ? (
+                <label className="model-pick">
+                  <span className="model-pick-label">Mode</span>
+                  <select value={mode ?? ""} onChange={(e) => setMode(e.target.value)} disabled={busy}>
+                    {providerState.modes.map((m) => (
+                      <option key={m} value={m}>
+                        {m === "agent" ? "Agent (multi-step)" : "Direct (one search)"}
+                        {m === providerState.defaultMode ? " · default" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               </div>
               <button className="send" type="submit" disabled={busy || !draft.trim()} aria-label="Send">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -820,6 +836,7 @@ export default function App() {
           onDone={(state) => {
             setProviderState(state);
             setProvider(state.default);
+            setMode(state.defaultMode ?? null);
             setShowLogin(false);
           }}
         />

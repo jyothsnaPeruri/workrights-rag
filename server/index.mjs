@@ -6,6 +6,7 @@
 import { fileURLToPath } from "node:url";
 import cors from "cors";
 import express from "express";
+import { answerAgentic } from "../scripts/agent.mjs";
 import { answerQuestion } from "../scripts/answer.mjs";
 import { availableProviders, defaultProvider, PROVIDERS } from "../scripts/providers.mjs";
 import { adminConfigured, isAdmin, login } from "./auth.mjs";
@@ -70,10 +71,16 @@ app.get("/api/stats", async (req, res) => {
 
 // What the client may offer. Visitors are told only the default; an
 // authenticated admin also gets the list they're allowed to switch between.
+// Which pipeline answers: "agent" (the model drives retrieval) or "direct"
+// (one fixed search). Visitors get the default; an admin may pick per question.
+const defaultMode = () => (process.env.ANSWER_MODE === "direct" ? "direct" : "agent");
+
 app.get("/api/providers", (req, res) => {
   const admin = isAdmin(req);
   res.json({
     default: defaultProvider(),
+    defaultMode: defaultMode(),
+    modes: admin ? ["agent", "direct"] : [],
     admin,
     adminAvailable: adminConfigured(),
     providers: admin ? availableProviders() : [],
@@ -225,6 +232,13 @@ app.post("/api/ask", async (req, res) => {
     if (await sessionHasDocuments(scope).catch(() => false)) provider = "free";
   }
 
+  let mode = defaultMode();
+  if (req.body?.mode && req.body.mode !== mode) {
+    if (!isAdmin(req)) return res.status(403).json({ error: "Only an admin can choose the answer mode." });
+    if (!["agent", "direct"].includes(req.body.mode)) return res.status(400).json({ error: "Unknown mode." });
+    mode = req.body.mode;
+  }
+
   const visitor = checkVisitor(req.ip ?? "unknown");
   if (!visitor.allowed) {
     const minutes = Math.ceil(visitor.retryAfterSec / 60);
@@ -270,9 +284,12 @@ app.post("/api/ask", async (req, res) => {
   });
 
   try {
-    const { sources } = await answerQuestion(question, {
+    const hasOwnDocuments = scope ? await sessionHasDocuments(scope).catch(() => false) : false;
+    const answer = mode === "agent" ? answerAgentic : answerQuestion;
+    const { sources, steps, mode: usedMode } = await answer(question, {
       provider,
       scope,
+      hasOwnDocuments,
       onToken: (token) => {
         if (!closed) send("token", token);
       },
@@ -294,11 +311,17 @@ app.post("/api/ask", async (req, res) => {
           uploaded: Boolean(source.scope && source.scope !== "public"),
         })),
       );
-      send("done", { provider });
+      send("done", { provider, mode: usedMode ?? mode, steps: steps ?? [] });
     }
   } catch (error) {
-    console.error("ask failed:", error);
-    if (!closed) send("error", { error: "Something went wrong answering that. Please try again." });
+    console.error("ask failed:", error.message?.slice(0, 200));
+    if (!closed) {
+      send("error", {
+        error: error.rateLimited
+          ? "The free AI service is busy right now. Please wait a minute and ask again."
+          : "Something went wrong answering that. Please try again.",
+      });
+    }
   } finally {
     res.end();
   }

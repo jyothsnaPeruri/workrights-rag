@@ -17,7 +17,9 @@
     "start": "node server/index.mjs",
     "admin:hash": "node scripts/admin-hash.mjs",
     "ingest:free": "node --env-file=.env scripts/ingest.mjs free",
-    "set-secret": "node scripts/set-secret.mjs"
+    "set-secret": "node scripts/set-secret.mjs",
+    "evaluate:answers": "node --env-file=.env scripts/evaluate-answers.mjs",
+    "ask:agent": "node --env-file=.env scripts/ask-agent.mjs"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

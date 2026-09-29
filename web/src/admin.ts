@@ -17,6 +17,8 @@ export interface ProviderState {
   admin: boolean;
   adminAvailable: boolean;
   providers: Provider[];
+  defaultMode?: "agent" | "direct";
+  modes?: Array<"agent" | "direct">;
 }
 
 const API = import.meta.env.VITE_API_URL ?? "";
@@ -66,7 +68,8 @@ export async function adminLogin(username: string, password: string): Promise<Pr
   if (!response.ok) throw new Error(body?.error ?? `Sign-in failed (${response.status})`);
 
   setToken(body.token);
-  return { default: body.default, admin: true, adminAvailable: true, providers: body.providers };
+  // Login returns providers but not modes; refetch the full state so the UI has both.
+  return loadProviderState();
 }
 
 export interface UsageTotals {

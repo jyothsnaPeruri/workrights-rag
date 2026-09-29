@@ -45,6 +45,7 @@ export function ask(
   question: string,
   handlers: AskHandlers,
   provider?: string,
+  mode?: string,
 ): { done: Promise<void>; abort: () => void } {
   const controller = new AbortController();
 
@@ -52,7 +53,7 @@ export function ask(
     const response = await fetch(`${API}/api/ask`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders(), ...sessionHeaders() },
-      body: JSON.stringify({ question, provider }),
+      body: JSON.stringify({ question, provider, mode }),
       signal: controller.signal,
     });
 

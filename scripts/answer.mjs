@@ -17,7 +17,7 @@ import { retrieve } from "./retrieve.mjs";
 //  - "no legal advice"    -> this is general information about entitlements, and
 //                            the app must not tell anyone what to do about their
 //                            own situation.
-const SYSTEM_PROMPT = `You answer questions about Australian workplace entitlements using ONLY the numbered excerpts supplied in the user message. The excerpts come from the Fair Work Ombudsman website.
+export const SYSTEM_PROMPT = `You answer questions about Australian workplace entitlements using ONLY the numbered excerpts supplied in the user message. The excerpts come from the Fair Work Ombudsman website.
 
 Rules:
 1. Use only the excerpts. Never use outside knowledge, even if you are confident.

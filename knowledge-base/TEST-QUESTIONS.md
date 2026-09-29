@@ -140,3 +140,32 @@ Q7's dollar figure changes every 1 July, and Q20's public holiday dates change e
 When those change, the answer here must be updated and the knowledge base re-downloaded.
 This is deliberate — it's the "stale data" problem in RAG, and having two questions that
 depend on it means our test suite will catch it.
+
+---
+
+## Hard questions (answer-level evaluation)
+
+These need more than one search, or a fact the single-shot pipeline tends to drop. Used by
+`npm run evaluate:answers` to compare the direct pipeline against the agent. The **Expect**
+line is what a correct answer must contain; a judge model checks for it.
+
+**H1:** I've worked here 4 years and I'm being made redundant — how much notice and how much redundancy pay?
+**Expect:** 3 weeks notice AND 8 weeks redundancy pay
+
+**H2:** I'm 47 and have worked here 6 years — how much notice am I owed if I'm dismissed?
+**Expect:** 5 weeks (4 weeks for more than 5 years, plus 1 extra week for being over 45 with 2+ years)
+
+**H3:** How many days of sick leave and how many weeks of annual leave does a full-time employee get?
+**Expect:** 10 days sick leave AND 4 weeks annual leave
+
+**H4:** Can a casual employee take unpaid parental leave, and what's the condition?
+**Expect:** yes, if employed regularly and systematically for at least 12 months with a reasonable expectation of continuing
+
+**H5:** What's the deadline to lodge an unfair dismissal claim, and how long must I have worked at a small business to be eligible?
+**Expect:** 21 days AND 12 months
+
+**H6:** If I resign as a casual, do I need to give notice, and does my employer have to pay out my unused sick leave?
+**Expect:** no notice required for casuals AND sick leave is not paid out
+
+**H7:** How much redundancy pay for someone with 9 years of service, and does it apply if the employer has 12 employees?
+**Expect:** 16 weeks AND no — small business employers (fewer than 15 employees) generally don't have to pay redundancy pay
