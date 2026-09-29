@@ -53,11 +53,11 @@ Measured with an answer-level LLM judge over 20 standard + 7 hard multi-part que
 | Standard (20) | 18/20 | 18/20 |
 | Hard, multi-part (7) | 6/7 | **7/7** |
 | All (27) | 89% | **93%** |
-| Median latency | ~1.6 s | ~2.3 s |
+| Median latency | 2.1 s | 2.3 s |
 | Model calls / question | 1.0 | 2.1 |
 
 The agent's gain is concentrated in multi-part questions — the case a single search structurally
-loses. It costs twice the model calls, and on Groq's free tier (8,000 tokens/minute) that matters,
+loses. It costs twice the model calls (though only ~10% more median latency), and on Groq's free tier (8,000 tokens/minute) that matters,
 so it degrades: brief retry → direct pipeline → "service busy". `ANSWER_MODE=direct` reverts.
 `npm run evaluate:answers` reproduces the table.
 

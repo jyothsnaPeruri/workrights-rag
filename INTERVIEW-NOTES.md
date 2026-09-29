@@ -562,7 +562,7 @@ gpt-4.1-mini so the Groq candidate isn't marking its own work)
 | Standard (20) | 18/20 | 18/20 |
 | Hard, multi-part (7) | 6/7 | **7/7** |
 | All (27) | 24/27 (89%) | **25/27 (93%)** |
-| Median latency (unthrottled) | ~1.6 s | ~2.3 s |
+| Median latency (unthrottled) | 2.1 s | 2.3 s |
 | Model calls per question | 1.0 | 2.1 |
 | Searches per question | 1 | 1.2 |
 
@@ -570,12 +570,13 @@ The agent's one extra pass is exactly the question the pipeline had always got w
 redundant — how much notice *and* redundancy pay?" — two searches, both facts. On simple
 questions it ran one search and answered, so it cost one extra (cheap) planning call, not a
 storm of searches. Honest caveats: 27 questions is small, so a one-question difference is
-noise; the two remaining failures are shared (Q1 — the judge required "casuals get none", which
-neither mode volunteered) or a coin-flip (Q17, agent only). And the averages in the raw log are
+noise. Failures: direct missed Q1, Q10 and H1; the agent missed Q1 and Q17. Q1 is judge strictness
+(it required "casuals get none", which neither mode volunteered); Q10 and H1 are the pipeline's
+single search starving a second fact; Q17 is the agent's one regression, a coin-flip on wording. And the averages in the raw log are
 inflated by free-tier throttling, which is why I report medians.
 
 **Q: Why not just always use the agent, then?**
-Cost and predictability. 2.1× the model calls, ~40% more latency, and on Groq's free tier
+Cost and predictability. 2.1× the model calls, ~10% more median latency (the planning call is short), and on Groq's free tier
 (8,000 tokens/minute) an agent question at 5–7k tokens is roughly one per minute — so it degrades
 gracefully: retry briefly, then fall back to the direct pipeline, then tell the visitor the
 service is busy. The direct pipeline stays as a first-class mode, one setting away.
