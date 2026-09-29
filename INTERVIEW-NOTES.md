@@ -512,3 +512,31 @@ absorbs it, but the UI needs a visible "uploading" state or a 40-second upload l
 ask "how much notice does my contract give me after 4 years?", and the answer sets the contract's
 2 weeks beside the NES minimum of 3 weeks, cited to both — without telling the user whether the
 clause is lawful, which it correctly leaves to the Infoline.
+
+---
+
+## Step 12 — Usage stats without tracking anyone
+
+**What I built:** an admin-only Usage panel (Today / 7 days / All-time × Visits / Questions /
+Uploads) backed by `/api/stats`. No analytics script, no cookies, nothing stored about a person.
+
+**Q: How do you count visits with no analytics script?**
+The page already calls `/api/health` on load to wake the free-tier server. A browser sends an
+`Origin` header on that cross-origin fetch; the keep-alive cron (curl) does not. So "health
+request with an Origin" *is* a page load. It's a count per day, not a person — no way to know
+someone came back, which is the trade-off for collecting nothing. For a demo whose pitch is
+"we don't track you", that's the right side of the line. LinkedIn's own post analytics cover
+the click-through; GoatCounter would be the step up if referrers ever mattered.
+
+**Q: Tell me about a concurrency bug.**
+Three page loads arrived at once and only two were counted. The counter lazily loaded today's
+stored value on first use; three concurrent requests each saw "not loaded yet", each read the
+index, each reset the counter to the stored value — and two increments were lost. Fix: single-
+flight initialisation — the first request stores the load *promise*, everyone else awaits it,
+increments happen only after. Verified with six concurrent requests: exactly +6.
+
+**Q: Why did the panel lag behind what you'd just done?**
+Counters flush to the index every fifth event to save writes, and the stats endpoint read from
+the index. The live numbers are in memory on the same process, so the endpoint overlays them for
+today. A restart can still lose up to four unflushed counts — acceptable for a visit tally,
+not for the spending cap, which is why the cap counter flushes more eagerly.

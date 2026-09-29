@@ -68,3 +68,23 @@ export async function adminLogin(username: string, password: string): Promise<Pr
   setToken(body.token);
   return { default: body.default, admin: true, adminAvailable: true, providers: body.providers };
 }
+
+export interface UsageTotals {
+  visits: number;
+  questions: number;
+  uploads: number;
+}
+
+export interface UsageStats {
+  today: UsageTotals;
+  last7: UsageTotals;
+  all: UsageTotals;
+  days: Array<{ day: string } & UsageTotals & { questions: number }>;
+}
+
+/** Admin only; the server answers 403 without a valid token. */
+export async function loadStats(): Promise<UsageStats> {
+  const response = await fetch(`${API}/api/stats`, { headers: authHeaders() });
+  if (!response.ok) throw new Error("Couldn't load stats.");
+  return response.json();
+}

@@ -817,6 +817,69 @@ button {
   cursor: pointer;
 }
 
+/* ------------------------------------------------------------- stats -- */
+
+.stats {
+  padding-top: 10px;
+  border-top: 1px solid rgb(255 255 255 / 0.12);
+}
+
+.stats .label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.stats .refresh {
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: rgb(232 238 243 / 0.55);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.stats .refresh:hover {
+  color: #fff;
+}
+
+.stats table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats th,
+.stats td {
+  padding: 3px 0;
+  text-align: right;
+}
+
+.stats thead th {
+  color: rgb(232 238 243 / 0.5);
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.stats tbody th {
+  color: rgb(232 238 243 / 0.75);
+  font-weight: 500;
+  text-align: left;
+}
+
+.stats td {
+  color: #fff;
+  font-weight: 600;
+}
+
+.stats-note {
+  margin-top: 6px;
+  font-size: 0.7rem;
+}
+
 /* ---------------------------------------------------------- admin panel -- */
 
 .admin-box {

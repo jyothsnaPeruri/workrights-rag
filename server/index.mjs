@@ -9,7 +9,7 @@ import express from "express";
 import { answerQuestion } from "../scripts/answer.mjs";
 import { availableProviders, defaultProvider, PROVIDERS } from "../scripts/providers.mjs";
 import { adminConfigured, isAdmin, login } from "./auth.mjs";
-import { checkVisitor, consumeGlobalQuota, ensureUsageIndex, LIMITS } from "./limits.mjs";
+import { checkVisitor, consumeGlobalQuota, ensureUsageIndex, LIMITS, recordUpload, recordVisit, usageStats } from "./limits.mjs";
 import multer from "multer";
 import {
   deleteDocument,
@@ -50,7 +50,23 @@ app.use(["/api/ask", "/api/documents"], (req, res, next) => {
   next();
 });
 
-app.get("/api/health", (_req, res) => res.json({ ok: true }));
+app.get("/api/health", (req, res) => {
+  // The page calls this on load to wake the server. A browser sends an Origin
+  // header on that cross-origin fetch; the keep-alive cron does not. So "health
+  // with an Origin" is a page load — counted with no cookie, script or user data.
+  if (req.get("origin")) recordVisit().catch(() => {});
+  res.json({ ok: true });
+});
+
+app.get("/api/stats", async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: "Admin only." });
+  try {
+    res.json(await usageStats());
+  } catch (error) {
+    console.error("stats failed:", error.message);
+    res.status(500).json({ error: "Couldn't load stats." });
+  }
+});
 
 // What the client may offer. Visitors are told only the default; an
 // authenticated admin also gets the list they're allowed to switch between.
@@ -139,7 +155,9 @@ app.post("/api/documents", requireSession, (req, res) => {
     try {
       // multer decodes names as latin1; recover UTF-8 so "résumé.pdf" survives.
       const name = Buffer.from(req.file.originalname, "latin1").toString("utf8");
-      res.status(201).json(await ingestUpload(res.locals.session, name, req.file.buffer));
+      const doc = await ingestUpload(res.locals.session, name, req.file.buffer);
+      recordUpload().catch(() => {});
+      res.status(201).json(doc);
     } catch (error) {
       if (error instanceof UploadError) return res.status(error.status).json({ error: error.message });
       console.error("upload failed:", error.message);

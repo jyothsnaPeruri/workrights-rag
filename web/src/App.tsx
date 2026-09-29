@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
 import { ask, warmUp, type Source } from "./api";
 import { history, newId, titleFrom, type Conversation, type Turn } from "./storage";
-import { adminLogin, loadProviderState, setToken, type ProviderState } from "./admin";
+import { adminLogin, loadProviderState, loadStats, setToken, type ProviderState, type UsageStats } from "./admin";
 import { deleteDocument, listDocuments, uploadDocument, type UploadedDocument } from "./documents";
 
 const STARTERS = [
@@ -240,6 +240,7 @@ export default function App() {
   const [providerState, setProviderState] = useState<ProviderState | null>(null);
   const [provider, setProvider] = useState<string | null>(null);
   const [showLogin, setShowLogin] = useState(false);
+  const [stats, setStats] = useState<UsageStats | null>(null);
   const [documents, setDocuments] = useState<UploadedDocument[]>([]);
   const [uploading, setUploading] = useState(false);
   const [showUploadNotice, setShowUploadNotice] = useState(false);
@@ -292,6 +293,15 @@ export default function App() {
         /* the health check already surfaces a server that isn't reachable */
       });
   }, []);
+
+  // Usage stats are admin-only; refetch whenever admin state flips on.
+  useEffect(() => {
+    if (!providerState?.admin) {
+      setStats(null);
+      return;
+    }
+    loadStats().then(setStats).catch(() => setStats(null));
+  }, [providerState?.admin]);
 
   useEffect(() => {
     listDocuments().then(setDocuments).catch(() => {
@@ -499,6 +509,48 @@ export default function App() {
               </li>
             ))}
           </ul>
+        )}
+
+        {providerState?.admin && (
+          <div className="stats">
+            <p className="label">
+              Usage
+              <button className="refresh" onClick={() => loadStats().then(setStats).catch(() => {})} aria-label="Refresh stats" title="Refresh">
+                ↻
+              </button>
+            </p>
+            {stats ? (
+              <table>
+                <thead>
+                  <tr>
+                    <th />
+                    <th>Today</th>
+                    <th>7 days</th>
+                    <th>All</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(
+                    [
+                      ["Visits", "visits"],
+                      ["Questions", "questions"],
+                      ["Uploads", "uploads"],
+                    ] as const
+                  ).map(([label, key]) => (
+                    <tr key={key}>
+                      <th>{label}</th>
+                      <td>{stats.today[key]}</td>
+                      <td>{stats.last7[key]}</td>
+                      <td>{stats.all[key]}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="rail-empty">Loading…</p>
+            )}
+            <p className="rail-empty stats-note">Visits are page loads, not unique people — no cookies, nothing stored about anyone.</p>
+          </div>
         )}
 
         <div className="rail-foot">
