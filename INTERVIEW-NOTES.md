@@ -341,7 +341,7 @@ rejected before any Azure call; confirmed the real origin still streams normally
 
 ## Step 8 — Deployment on Azure with an Azure DevOps pipeline
 
-**Live:** https://lemon-river-08ead7000.4.azurestaticapps.net
+**Live:** https://jyothsnaperuri.github.io/workrights-rag/ (frontend on GitHub Pages; Static Web Apps copy still runs)
 **Repo:** https://github.com/jyothsnaPeruri/workrights-rag
 
 **What I built:** `azure-pipelines.yml` — three stages. Build (npm ci, typecheck, Vite build,

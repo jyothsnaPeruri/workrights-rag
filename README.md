@@ -3,7 +3,8 @@
 Ask about leave, pay, notice or redundancy in plain English and get an answer with **citations you
 can click and check**, drawn only from official Fair Work Ombudsman pages.
 
-**Live demo:** https://lemon-river-08ead7000.4.azurestaticapps.net
+**Live demo:** https://jyothsnaperuri.github.io/workrights-rag/  
+_(frontend on GitHub Pages; the API runs on Azure App Service)_
 
 > Unofficial learning project. Not affiliated with, endorsed by or connected to the Fair Work
 > Ombudsman. General information only — not legal advice.
