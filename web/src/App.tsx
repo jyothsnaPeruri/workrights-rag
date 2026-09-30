@@ -771,12 +771,12 @@ export default function App() {
                   run several searches (better on multi-part questions, slower);
                   "Standard" is one search. */}
               {providerState?.modes?.length ? (
-                <label className="model-pick" title="Standard search: one retrieval pass, fastest. Agentic search: the model plans and runs several searches, best for multi-part questions.">
-                  <span className="model-pick-label">Search</span>
+                <label className="model-pick" title="Standard: fastest, one lookup. Agent: plans and runs several lookups, best for multi-part questions.">
+                  <span className="model-pick-label">Mode</span>
                   <select value={mode ?? ""} onChange={(e) => setMode(e.target.value)} disabled={busy}>
                     {providerState.modes.map((m) => (
                       <option key={m} value={m}>
-                        {m === "agent" ? "Agentic search (multi-step)" : "Standard search"}
+                        {m === "agent" ? "Agent" : "Standard"}
                       </option>
                     ))}
                   </select>
