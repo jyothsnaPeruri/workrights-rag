@@ -767,16 +767,16 @@ export default function App() {
                   </select>
                 </label>
               ) : null}
-              {/* Anyone can choose how hard the app works on a question. "Thorough"
-                  lets the model run several searches (better on multi-part
-                  questions, slower); "Quick" is one search. */}
+              {/* Anyone can choose the retrieval strategy. "Agentic" lets the model
+                  run several searches (better on multi-part questions, slower);
+                  "Standard" is one search. */}
               {providerState?.modes?.length ? (
-                <label className="model-pick" title="Quick: one search, ~2s. Thorough: the AI runs several searches for multi-part questions, a bit slower.">
-                  <span className="model-pick-label">Mode</span>
+                <label className="model-pick" title="Standard search: one retrieval pass, fastest. Agentic search: the model plans and runs several searches, best for multi-part questions.">
+                  <span className="model-pick-label">Search</span>
                   <select value={mode ?? ""} onChange={(e) => setMode(e.target.value)} disabled={busy}>
                     {providerState.modes.map((m) => (
                       <option key={m} value={m}>
-                        {m === "agent" ? "Thorough · multi-step" : "Quick · one search"}
+                        {m === "agent" ? "Agentic search (multi-step)" : "Standard search"}
                       </option>
                     ))}
                   </select>
