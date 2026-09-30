@@ -392,7 +392,7 @@ export default function App() {
         // Only send a provider when an admin has actually chosen a non-default
         // one; the server rejects the field from anyone else.
         providerState?.admin && provider && provider !== providerState.default ? provider : undefined,
-        providerState?.admin && mode && mode !== providerState.defaultMode ? mode : undefined,
+        mode && mode !== providerState?.defaultMode ? mode : undefined,
       ).done;
 
       const finished: Turn[] = [
@@ -767,14 +767,16 @@ export default function App() {
                   </select>
                 </label>
               ) : null}
-              {providerState?.admin && providerState.modes?.length ? (
-                <label className="model-pick">
+              {/* Anyone can choose how hard the app works on a question. "Thorough"
+                  lets the model run several searches (better on multi-part
+                  questions, slower); "Quick" is one search. */}
+              {providerState?.modes?.length ? (
+                <label className="model-pick" title="Quick: one search, ~2s. Thorough: the AI runs several searches for multi-part questions, a bit slower.">
                   <span className="model-pick-label">Mode</span>
                   <select value={mode ?? ""} onChange={(e) => setMode(e.target.value)} disabled={busy}>
                     {providerState.modes.map((m) => (
                       <option key={m} value={m}>
-                        {m === "agent" ? "Agent (multi-step)" : "Direct (one search)"}
-                        {m === providerState.defaultMode ? " · default" : ""}
+                        {m === "agent" ? "Thorough · multi-step" : "Quick · one search"}
                       </option>
                     ))}
                   </select>

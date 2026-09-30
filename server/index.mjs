@@ -80,7 +80,10 @@ app.get("/api/providers", (req, res) => {
   res.json({
     default: defaultProvider(),
     defaultMode: defaultMode(),
-    modes: admin ? ["agent", "direct"] : [],
+    // Anyone may choose the answer mode; only the provider is gated, since
+    // that's the one with a cost. The agent's free-tier degradation (retry →
+    // direct → "busy") is what makes it safe to offer to everyone.
+    modes: ["direct", "agent"],
     admin,
     adminAvailable: adminConfigured(),
     providers: admin ? availableProviders() : [],
@@ -234,7 +237,6 @@ app.post("/api/ask", async (req, res) => {
 
   let mode = defaultMode();
   if (req.body?.mode && req.body.mode !== mode) {
-    if (!isAdmin(req)) return res.status(403).json({ error: "Only an admin can choose the answer mode." });
     if (!["agent", "direct"].includes(req.body.mode)) return res.status(400).json({ error: "Unknown mode." });
     mode = req.body.mode;
   }
