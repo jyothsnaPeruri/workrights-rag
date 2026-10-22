@@ -1,0 +1,46 @@
+# Render Blueprint — the Work Rights Q&A API on Render's free plan.
+#
+# Moved here from Azure App Service when the Azure trial ended (Oct 2026).
+# The knowledge base lives in Neon Postgres + pgvector (free), the models are
+# Groq (answers) and Gemini (embeddings), and the frontend is on GitHub Pages.
+# Secrets are entered in the Render dashboard, never committed (sync: false).
+services:
+  - type: web
+    name: workrights-api
+    runtime: node
+    plan: free
+    region: singapore          # nearest free region to Sydney
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL       # Neon connection string
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_CHAT_MODEL
+        value: openai/gpt-oss-120b
+      - key: GEMINI_EMBEDDING_MODEL
+        value: gemini-embedding-001
+      - key: DEFAULT_PROVIDER
+        value: free
+      - key: ANSWER_MODE
+        value: direct
+      - key: CLIENT_ORIGIN
+        value: https://jyothsnaperuri.github.io
+      - key: DAILY_QUESTION_CAP
+        value: "300"
+      - key: VISITOR_QUESTION_LIMIT
+        value: "15"
+      - key: VISITOR_WINDOW_MINUTES
+        value: "10"
+      - key: ADMIN_USERNAME
+        value: jo
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true

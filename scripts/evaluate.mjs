@@ -14,7 +14,7 @@
 // Usage: npm run evaluate
 
 import { readFile } from "node:fs/promises";
-import { getProvider } from "./providers.mjs";
+import { closeDb } from "./store.mjs";
 import { retrieve, TOP_K } from "./retrieve.mjs";
 
 const QUESTIONS_FILE = new URL("../knowledge-base/TEST-QUESTIONS.md", import.meta.url);
@@ -31,16 +31,15 @@ async function loadQuestions() {
   }));
 }
 
-const provider = process.argv[2];
-const models = getProvider(provider);
+const mode = process.env.RETRIEVAL_MODE ?? "vector";
 const questions = await loadQuestions();
 if (questions.length === 0) throw new Error("No questions parsed from TEST-QUESTIONS.md");
 
-console.log(`Evaluating ${models.label} on ${questions.length} questions (top ${TOP_K}, index "${models.index()}")\n`);
+console.log(`Evaluating ${mode} retrieval (Postgres + pgvector) on ${questions.length} questions, top ${TOP_K}\n`);
 
 const results = [];
 for (const q of questions) {
-  const hits = await retrieve(q.question, { provider });
+  const hits = await retrieve(q.question, { mode });
   const rank = hits.findIndex((hit) => hit.sourceFile === q.expected) + 1; // 0 = not found
   results.push({ ...q, rank, hits });
 
@@ -70,3 +69,5 @@ if (failures.length) {
     console.log(`       want ${f.expected}, got ${f.hits[0]?.sourceFile ?? "nothing"} (rank ${f.rank || "none"})`);
   }
 }
+
+await closeDb();

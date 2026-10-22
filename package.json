@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "fetch-sources": "node scripts/fetch-sources.mjs",
-    "verify": "node --env-file=.env scripts/verify-azure.mjs",
+    "verify": "node --env-file=.env scripts/verify.mjs",
     "ingest": "node --env-file=.env scripts/ingest.mjs",
     "search": "node --env-file=.env scripts/retrieve.mjs",
     "evaluate": "node --env-file=.env scripts/evaluate.mjs",
@@ -16,7 +16,6 @@
     "build:web": "vite build --config web/vite.config.ts web",
     "start": "node server/index.mjs",
     "admin:hash": "node scripts/admin-hash.mjs",
-    "ingest:free": "node --env-file=.env scripts/ingest.mjs free",
     "set-secret": "node scripts/set-secret.mjs",
     "evaluate:answers": "node --env-file=.env scripts/evaluate-answers.mjs",
     "ask:agent": "node --env-file=.env scripts/ask-agent.mjs"
@@ -27,6 +26,7 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.4.0",
+    "pg": "^8.23.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "unpdf": "^1.8.1"

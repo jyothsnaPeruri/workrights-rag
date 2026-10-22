@@ -9,9 +9,10 @@
 #   webAppName          your App Service name
 #   swaToken            Static Web Apps deployment token  (mark as SECRET)
 
-trigger:
-  branches:
-    include: [main]
+# Retired Oct 2026: the Azure trial ended and the app moved to Render + Neon +
+# GitHub Pages. Kept for reference — it's the Azure DevOps half of the project
+# story — but no longer triggered, so pushes don't queue a failing pipeline.
+trigger: none
 
 pool:
   vmImage: ubuntu-latest

@@ -1,20 +1,28 @@
 // Visitor document uploads.
 //
 // A visitor can upload a contract or policy and ask questions across it and
-// the Fair Work pages together. Uploaded chunks live in the same index as the
-// free knowledge base, tagged with the visitor's session id in `scope`;
-// retrieval filters on scope server-side, so isolation does not depend on the
-// UI behaving. Documents expire after RETENTION_DAYS and are swept hourly.
+// the Fair Work pages together. Uploaded chunks live in the same Postgres table
+// as the knowledge base, tagged with the visitor's session id in `scope`;
+// retrieval filters on scope in SQL, so isolation does not depend on the UI
+// behaving. Documents expire after RETENTION_DAYS and are swept hourly.
 //
-// Everything here runs on the free bundle (Gemini embeddings), because that is
-// the index uploads live in. Embedding and answering cost $0; the scarce
-// resource is the 50 MB Free-tier index, hence the storage cap and eviction.
+// Embeddings are Gemini, the same model as the corpus. The scarce resource is
+// the free database's storage, hence the per-visitor limits, the global chunk
+// cap and oldest-first eviction.
 
 import { createHash, randomUUID } from "node:crypto";
 import { extractText, getDocumentProxy } from "unpdf";
-import { search } from "../scripts/azure.mjs";
 import { chunkDocument } from "../scripts/chunk.mjs";
 import { PROVIDERS } from "../scripts/providers.mjs";
+import {
+  countUploadedChunks,
+  deleteScope,
+  deleteUpload,
+  insertUploadChunks,
+  listUploads,
+  oldestUpload,
+  sweepExpiredUploads,
+} from "../scripts/store.mjs";
 
 const provider = PROVIDERS.free;
 
@@ -55,77 +63,19 @@ async function toPages(name, buffer) {
   throw new UploadError(415, "Only PDF, TXT and Markdown files are supported.");
 }
 
-/* ------------------------------------------------------------- queries -- */
-
-const index = () => provider.index();
-
-async function listIds(filter, top = 1000, orderby) {
-  const result = await search.query(index(), { search: "*", filter, select: "id", top, orderby });
-  return result.value.map((doc) => doc.id);
-}
-
-async function deleteIds(ids) {
-  for (let i = 0; i < ids.length; i += 500) {
-    await search.upload(
-      index(),
-      ids.slice(i, i + 500).map((id) => ({ id, "@search.action": "delete" })),
-    );
-  }
-}
-
-async function uploadedChunkCount() {
-  const result = await search.query(index(), {
-    search: "*",
-    filter: "scope ne 'public'",
-    top: 0,
-    count: true,
-  });
-  return result["@odata.count"] ?? 0;
-}
-
 /* ------------------------------------------------------------- public -- */
 
-// Azure AI Search is eventually consistent: chunks uploaded a moment ago may
-// not show up in a query for a second or two. A visitor who uploads and then
-// immediately asks would be routed to the wrong index. So the server remembers
-// which sessions it has ingested for, and only falls back to querying the
-// index for sessions it hasn't seen (e.g. after a restart).
-const sessionsWithDocs = new Map(); // session -> true/false
+/** One row per document a visitor has uploaded. */
+export const listDocuments = (session) => listUploads(session);
 
+/** Postgres reads its own writes, so this is just a query — no cache needed. */
 export async function sessionHasDocuments(session) {
-  if (sessionsWithDocs.has(session)) return sessionsWithDocs.get(session);
-  const has = (await listDocuments(session)).length > 0;
-  sessionsWithDocs.set(session, has);
-  return has;
+  return (await listUploads(session)).length > 0;
 }
 
-/** One row per document a visitor has uploaded, newest last. */
-export async function listDocuments(session) {
-  const result = await search.query(index(), {
-    search: "*",
-    filter: `scope eq '${session}'`,
-    select: "docId,title,heading,expiresAt",
-    top: 1000,
-  });
-  const byDoc = new Map();
-  for (const row of result.value) {
-    const doc = byDoc.get(row.docId) ?? { id: row.docId, name: row.title, chunks: 0, expiresAt: row.expiresAt };
-    doc.chunks += 1;
-    byDoc.set(row.docId, doc);
-  }
-  return [...byDoc.values()];
-}
-
-export async function deleteDocument(session, docId) {
-  // The session is part of the filter, so a visitor can only delete their own.
-  await deleteIds(await listIds(`scope eq '${session}' and docId eq '${docId.replace(/'/g, "")}'`));
-  sessionsWithDocs.delete(session); // unknown now; re-check on next ask
-}
-
-export async function deleteSession(session) {
-  await deleteIds(await listIds(`scope eq '${session}'`));
-  sessionsWithDocs.set(session, false);
-}
+// The session is part of the filter, so a visitor can only delete their own.
+export const deleteDocument = (session, docId) => deleteUpload(session, docId);
+export const deleteSession = (session) => deleteScope(session);
 
 /**
  * Parses, chunks, embeds and indexes one file for one session.
@@ -156,8 +106,7 @@ export async function ingestUpload(session, filename, buffer) {
   const docId = randomUUID();
   const expiresAt = new Date(Date.now() + UPLOAD_LIMITS.retentionDays * 86_400_000).toISOString();
 
-  await search.upload(
-    index(),
+  await insertUploadChunks(
     chunks.map((chunk, i) => ({
       // Deterministic per session+doc+position: a retried upload overwrites
       // rather than duplicates.
@@ -176,60 +125,23 @@ export async function ingestUpload(session, filename, buffer) {
     })),
   );
 
-  // Don't report success until the chunks are actually searchable. Azure AI
-  // Search indexes asynchronously; without this, a visitor who uploads and
-  // immediately asks gets an answer that ignores the file they just added.
-  await waitUntilVisible(session, docId, chunks.length);
-
-  sessionsWithDocs.set(session, true);
   return { id: docId, name, chunks: chunks.length, expiresAt };
 }
 
-async function waitUntilVisible(session, docId, expected, timeoutMs = 15_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const result = await search.query(index(), {
-      search: "*",
-      filter: `scope eq '${session}' and docId eq '${docId}'`,
-      top: 0,
-      count: true,
-    });
-    if ((result["@odata.count"] ?? 0) >= expected) return;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  // Not fatal: the document will appear shortly; the UI just won't be able to
-  // use it for the very next question.
-  console.warn(`upload ${docId} not fully visible after ${timeoutMs}ms`);
-}
 
 /* ------------------------------------------------------------ hygiene -- */
 
 /** Removes every uploaded chunk past its expiry. Called hourly and at start-up. */
-export async function sweepExpired() {
-  const now = new Date().toISOString();
-  const ids = await listIds(`scope ne 'public' and expiresAt lt ${now}`);
-  if (ids.length) await deleteIds(ids);
-  return ids.length;
-}
+export const sweepExpired = sweepExpiredUploads;
 
 /**
  * Keeps total uploaded chunks under the global cap by dropping the documents
  * closest to expiry first. Storage is the one scarce resource on the free tier.
  */
 async function evictIfNeeded(incoming) {
-  let total = await uploadedChunkCount();
-  while (total + incoming > UPLOAD_LIMITS.maxUploadedChunks) {
-    const [oldest] = await search
-      .query(index(), {
-        search: "*",
-        filter: "scope ne 'public'",
-        select: "scope,docId",
-        orderby: "expiresAt asc",
-        top: 1,
-      })
-      .then((r) => r.value);
+  while ((await countUploadedChunks()) + incoming > UPLOAD_LIMITS.maxUploadedChunks) {
+    const oldest = await oldestUpload();
     if (!oldest) break;
-    await deleteDocument(oldest.scope, oldest.docId);
-    total = await uploadedChunkCount();
+    await deleteUpload(oldest.scope, oldest.docId);
   }
 }
