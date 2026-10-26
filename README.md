@@ -21,23 +21,44 @@ every claim, and says "I don't know" when the answer isn't there.
 
 ```
                  ┌──────────────────────┐
-  Browser ──────▶│ Azure Static Web Apps│  React + TypeScript (Vite)
+  Browser ──────▶│    GitHub Pages      │  React + TypeScript (Vite)
                  └──────────┬───────────┘
                             │ HTTPS  (keys never reach the browser)
                  ┌──────────▼───────────┐
-                 │  Azure App Service   │  Node + Express, SSE streaming
+                 │   Render (free)      │  Node + Express, SSE streaming
                  └─────┬──────────┬─────┘
                        │          │
         ┌──────────────▼───┐  ┌───▼──────────────────┐
-        │ Azure AI Search  │  │  Azure OpenAI        │
-        │ hybrid + semantic│  │  embeddings + chat   │
-        │ reranker, 201    │  │  text-embedding-3-   │
-        │ chunks           │  │  small, gpt-4.1-mini │
+        │ Neon Postgres +  │  │ Gemini (embeddings)  │
+        │ pgvector · 201   │  │ Groq (answers)       │
+        │ chunks + usage   │  │ both free tiers      │
         └──────────────────┘  └──────────────────────┘
 ```
 
-**Ingestion (offline, re-runnable):** fetch → clean → chunk → embed → index.
-**Query (per request):** embed question → hybrid search → semantic rerank → diversify → generate.
+**Ingestion (offline, re-runnable):** fetch → clean → chunk → embed → one-transaction corpus swap.
+**Query (per request):** embed question → pgvector search → diversify → generate (or the agent loop).
+
+Everything above is free with no expiry. It was originally built on **Azure OpenAI + Azure AI Search**,
+deployed by Azure DevOps to App Service and Static Web Apps; when the Azure trial ended in October 2026
+the knowledge base moved to Postgres + pgvector and the API to Render — see *Moving off Azure* below.
+The Azure pipeline is kept in the repo (`azure-pipelines.yml`, trigger disabled) as a record.
+
+## Moving off Azure
+
+The trial ending disabled every Azure resource at once: the App Service stopped, AI Search was
+disabled, Azure OpenAI rejected its keys. The replacement took a day and measured *better*:
+
+| Retrieval | Where | Hit@1 | MRR |
+| --- | --- | --- | --- |
+| Hybrid + semantic reranker | Azure AI Search | 19/20 | 0.975 |
+| **Vector only** | **Postgres + pgvector** | **20/20** | **1.000** |
+| Hybrid (vector + full-text, RRF) | Postgres | 14/20 | 0.817 |
+
+Hybrid without a reranker hurts, exactly as it did on Azure: the keyword arm pulls in pages that
+share common words. So the default is plain vector search, and `RETRIEVAL_MODE=hybrid` stays available
+for comparison. Two things got simpler in the move: the corpus is swapped in one transaction (no empty
+index between delete and rebuild), and the daily question cap is one atomic `INSERT … ON CONFLICT …
+WHERE` statement, removing a read-then-write race the Azure-backed counter had to tolerate.
 
 ## Agentic mode
 
@@ -64,20 +85,18 @@ so it degrades: brief retry → direct pipeline → "service busy". `ANSWER_MODE
 ## Retrieval quality
 
 Measured against 20 hand-written questions in
-[`knowledge-base/TEST-QUESTIONS.md`](knowledge-base/TEST-QUESTIONS.md):
+[`knowledge-base/TEST-QUESTIONS.md`](knowledge-base/TEST-QUESTIONS.md) — current stack is in the
+*Moving off Azure* table above (20/20). The original Azure-era experiment, kept because it's instructive:
 
-| Retrieval strategy | Hit@1 | MRR |
+| Retrieval strategy (Azure AI Search) | Hit@1 | MRR |
 | --- | --- | --- |
 | Vector only | 80% | 0.877 |
 | Hybrid (keyword + vector) | 65% | 0.813 |
 | **Hybrid + semantic reranker** | **95%** | **0.975** |
 
 Hybrid *alone* scores worse than vector alone — it widens the candidate pool with keyword matches,
-including noisy ones. The reranker is a cross-encoder that reads question and passage together, so
-it cleans up that wider pool. Either alone is worse than both.
-
-20 questions is a small sample: 95% is 19/20, and a one-question difference is noise. The
-80% → 95% gap is large enough to act on.
+including noisy ones; a cross-encoder reranker cleans that pool up. 20 questions is a small sample:
+a one-question difference is noise; the 80% → 95% and 65% → 100% gaps are large enough to act on.
 
 ## Upload your own document
 
@@ -124,32 +143,35 @@ document is lawful, which it leaves to the Fair Work Infoline.
 
 ```bash
 npm install
-cp .env.example .env     # fill in your Azure endpoints and keys
-npm run verify           # checks all three Azure services respond
+createdb workrights && psql -d workrights -c 'create extension vector'   # local Postgres with pgvector
+cp .env.example .env     # DATABASE_URL, Groq and Gemini keys, admin credentials
+npm run verify           # checks Postgres, Gemini and Groq respond
 npm run fetch-sources    # download and clean the knowledge base
-npm run ingest           # chunk, embed, index  (~$0.0006)
-npm run server           # API on :8787
-npm run web              # UI on :5173
+npm run ingest           # chunk, embed, write to Postgres (free)
+./demo.sh                # API on :8787 and UI on :5173, opens the browser
 ```
 
 | Command | What it does |
 | --- | --- |
-| `npm run verify` | Smoke-tests Azure OpenAI and AI Search before anything else |
+| `npm run verify` | Smoke-tests Postgres + pgvector, Gemini and Groq before anything else |
 | `npm run fetch-sources` | Re-downloads the 23 source pages (rules change — wages every 1 July) |
-| `npm run ingest` | Rebuilds the search index |
+| `npm run ingest` | Rebuilds the knowledge base in Postgres (one-transaction swap) |
 | `npm run search "…"` | Shows what retrieval returns, without generating an answer |
 | `npm run ask "…"` | Full RAG answer in the terminal |
 | `npm run evaluate` | Scores retrieval against the test questions |
 
-`RETRIEVAL_MODE=vector\|hybrid\|semantic` switches strategy, which is how the table above was produced.
+`RETRIEVAL_MODE=vector|hybrid` switches strategy (`vector` is the default).
 
 ## Deployment
 
-Azure DevOps pipeline ([`azure-pipelines.yml`](azure-pipelines.yml)): build and type-check once,
-then deploy the API to App Service and the frontend to Static Web Apps as independent stages.
+- **Frontend:** GitHub Pages, built and published by `.github/workflows/pages.yml` on every push to `web/`.
+- **API:** Render free plan from `render.yaml` (New → Blueprint). Secrets are entered in the Render
+  dashboard; the API URL the frontend calls is the `API_URL` repository variable.
+- **Keep-alive:** `.github/workflows/keep-alive.yml` pings `/api/health` every 10 minutes during Sydney
+  daytime only — Render's 750 free instance-hours a month are shared across the account.
 
-The evaluation suite is deliberately **not** in CI — it needs live credentials and costs money per
-run, so it stays a manual gate before changing retrieval.
+The evaluation suites are deliberately **not** in CI — they need live model credentials and the free
+tiers' per-minute limits, so they stay manual gates before changing retrieval or the prompt.
 
 ## Attribution
 

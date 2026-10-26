@@ -594,3 +594,49 @@ Clarifying questions (ask for years of service instead of guessing), a self-chec
 drops any sentence without a citation, and streaming the agent's steps to the screen. Each is a
 prompt-and-tool change on the same loop; each costs another model call, so each would go through
 the same evaluation before becoming a default.
+
+---
+
+## Step 14 — The Azure trial ended and took production with it
+
+**What happened:** around 17 October the Azure free trial expired. Azure doesn't just stop billing —
+it disables the subscription: the App Service returned "this web app is stopped", AI Search reported
+itself disabled, Azure OpenAI rejected the keys. The keep-alive job's failure emails were the alarm.
+I found out on the 22nd.
+
+**Q: What did you do?**
+Paused the alarm first (disabled the failing cron) so the noise stopped, then diagnosed each service
+rather than assuming: Pages was fine (frontend up), Groq and Gemini were fine (outside Azure), and
+every Azure piece was dead. Two options: add a card to Azure, or move. I chose to move to services
+that are free with no expiry: the knowledge base to **Postgres + pgvector** on Neon, the API to
+Render, models unchanged. Done in a day.
+
+**Q: What changed in the code?**
+One module replaced Azure AI Search: a `chunks` table with a pgvector column and a generated
+`tsvector`, scope-filtered in SQL exactly as before, plus a `usage_daily` table. Retrieval became a
+pgvector cosine query. Ingestion got *better* — the corpus is swapped inside one transaction, so
+readers never see an empty or half-built index; on Azure I'd had to accept a delete-then-rebuild gap.
+The daily cap became one atomic `INSERT … ON CONFLICT … WHERE questions < cap` statement, which
+removed a read-then-write race I'd documented and tolerated on Azure. Upload visibility polling went
+away too: Postgres reads its own writes.
+
+**Q: Did you lose accuracy without Azure's semantic reranker?**
+No — and I expected to. Re-running the same 20 questions: plain vector search on pgvector scored
+**20/20, MRR 1.000**, versus 19/20 with Azure's hybrid + reranker. Hybrid on Postgres (vector +
+full-text fused with RRF) scored 14/20 — the same pattern as on Azure, where hybrid without a
+reranker had dropped to 65%: the keyword arm pulls in pages that merely share common words. So the
+default is vector only, hybrid is kept for comparison, and the number is measured, not assumed.
+Honest caveat: 20 questions, so 20 vs 19 is noise; "no loss" is the defensible claim, not "better".
+
+**Q: Anything bite you?**
+The Postgres port (5432) was blocked on my network, so the standard driver timed out with an empty
+error. Neon's own driver tunnels Postgres over a WebSocket on 443, which is always open — one
+conditional in the connection code, and the same code ingests from a laptop and serves from Render.
+Also a small lesson in secrets handling: a connection string pasted onto a command line gets split by
+the `&` in its query string and lands in shell history, which is why I keep `set-secret` prompting
+for the value separately.
+
+**Q: What would you do differently?**
+Set a calendar reminder for the trial's end, and build the migration before the deadline instead of
+after it — the code was provider-agnostic enough that it took a day, but the site was dark for five.
+And keep a cheap always-on health alert (the keep-alive emails did the job by accident).
