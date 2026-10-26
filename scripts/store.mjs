@@ -9,20 +9,32 @@
 // faster and exact as a sequential scan. An HNSW index would be the next step
 // at tens of thousands of rows.
 
+import { neonConfig, Pool as NeonPool } from "@neondatabase/serverless";
 import pg from "pg";
 import { env } from "./http.mjs";
 
 export const DIMENSIONS = 768; // Gemini gemini-embedding-001, truncated (Matryoshka)
 
 let pool;
+
+/**
+ * Neon is reached with Neon's own driver, which tunnels the Postgres protocol
+ * over a WebSocket on port 443. Plenty of home and office networks block the
+ * Postgres port (5432) outright — this one did — while 443 is always open, so
+ * the same code ingests from a laptop and serves from Render. The driver's Pool
+ * is pg-compatible (query, connect, transactions), so nothing else changes.
+ * Anything that isn't Neon (local development) uses plain `pg`.
+ */
 export function db() {
   if (!pool) {
-    pool = new pg.Pool({
-      connectionString: env("DATABASE_URL"),
-      max: Number(process.env.DB_POOL_SIZE ?? 5),
-      // Neon and most hosted Postgres require TLS; local development does not.
-      ssl: /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL ?? "") ? false : { rejectUnauthorized: true },
-    });
+    const url = env("DATABASE_URL");
+    const max = Number(process.env.DB_POOL_SIZE ?? 5);
+    if (/\.neon\.tech/.test(url)) {
+      neonConfig.webSocketConstructor = WebSocket; // Node 22+ global
+      pool = new NeonPool({ connectionString: url, max });
+    } else {
+      pool = new pg.Pool({ connectionString: url, max });
+    }
   }
   return pool;
 }
