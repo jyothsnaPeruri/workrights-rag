@@ -34,7 +34,9 @@ jobs:
       - run: npm run typecheck
       - run: npm run build:web
         env:
-          VITE_API_URL: https://workrights-api-apaudma8dxf4d8az.australiaeast-01.azurewebsites.net
+          # Repository variable (Settings > Secrets and variables > Actions > Variables),
+          # so moving the API needs no code change.
+          VITE_API_URL: ${{ vars.API_URL }}
           VITE_BASE: /workrights-rag/
       - uses: actions/upload-pages-artifact@v3
         with:

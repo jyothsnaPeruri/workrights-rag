@@ -1,10 +1,15 @@
-# Keeps the free-tier App Service awake.
+# Keeps the free-tier API awake during Sydney daytime.
 #
-# App Service F1 sleeps after ~20 minutes idle and takes 20-30 seconds to wake,
-# which is long enough for a visitor arriving from a LinkedIn link to give up.
-# A health-check request every 5 minutes prevents the sleep. /api/health does
-# no work — no model call, no search — so it costs nothing beyond a few
-# milliseconds of the app's 60 CPU-minutes/day allowance.
+# Render's free plan sleeps a service after ~15 minutes idle and takes 30-60
+# seconds to wake — long enough for a visitor from a LinkedIn link to give up.
+# A health-check every 10 minutes prevents the sleep; /api/health does no
+# work (no model call, no search).
+#
+# Daytime only, on purpose: Render's free plan gives 750 instance-hours a
+# month across ALL services on the account, and Mini Bank shares it. Awake
+# 7am-11pm Sydney (16h/day ≈ 490h/month) leaves room for Mini Bank's traffic
+# without either service being suspended. GitHub cron is UTC; Sydney is
+# UTC+11 in summer (AEDT), so 7am-11pm AEDT is 20:00-12:00 UTC.
 #
 # GitHub Actions minutes are free and unmetered for public repositories. The
 # schedule is best-effort (runs can be a few minutes late) and GitHub disables
@@ -15,7 +20,7 @@ name: Keep API awake
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/10 20-23,0-12 * * *"
   workflow_dispatch:
 
 jobs:
@@ -25,7 +30,6 @@ jobs:
     steps:
       - name: Ping health endpoint
         run: |
-          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 \
-            https://workrights-api-apaudma8dxf4d8az.australiaeast-01.azurewebsites.net/api/health)
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 "${{ vars.API_URL }}/api/health")
           echo "health returned $code"
           test "$code" = "200"
